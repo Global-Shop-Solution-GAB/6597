@@ -1,0 +1,293 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'TJS February 2020
+'Customer: Benchmark Media Systems
+'AJC January 2022
+'Customer: Grovtec
+'This program is used to ensure a correlation between Shopify Product IDs and Global Shop part numbers.  
+'This relies on GS part numbers being stored as variant SKUs in Shopify.
+
+
+F.Intrinsic.UI.InvokeWaitDialog("Gathering Product Data from Shopify","Please wait")
+'Wiping out the current data to start fresh
+F.Intrinsic.Control.CallSub(ClearTable)
+
+'This grabs the data in the global shop system so that it knows whats already been grabbed from the website.
+F.Intrinsic.Control.CallSub(PartAssoc)
+F.Intrinsic.Control.CallSub(PartGathering)
+F.Intrinsic.UI.ChangeWaitStatus("Saving Product Associations")
+F.Intrinsic.Control.CallSub(SaveInfo)
+F.Intrinsic.UI.CloseWaitDialog
+
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ClearTable.Start
+F.Intrinsic.Control.Try
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.ODBC.Connection!conts.Execute("delete GCG_6597_INV_ASSOC")
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.ClearTable.End
+
+Program.Sub.PartGathering.Start
+F.Intrinsic.Control.Try
+V.Local.bLinkExists.Declare(Boolean, False)
+V.Local.bFieldExists.Declare(Boolean, False)
+V.Local.bValueExists.Declare(Boolean, False)
+V.Local.sUser.Declare(String,"")
+V.Local.sPass.Declare(String,"")
+V.Local.sURL.Declare(String,"")
+V.Local.sFile.Declare(String,"")
+V.Local.sRet.Declare(String,"")
+V.Local.sRet2.Declare(String)
+V.Local.sData.Declare(String,"")
+V.Local.sHeadPath.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sVersion.Declare(String, "")
+V.Local.sPartID.Declare(String,"")
+V.Local.sFilter.Declare(String,"")
+V.Local.sLinePath.Declare(String,"")
+V.Local.bFlag.Declare(Boolean,False)
+V.Local.iLine.Declare(Long,0)
+V.Local.sSetPage.Declare(String,"")
+V.Local.sPage.Declare(String,"")
+V.Local.bNextPage.Declare(Boolean,False)
+V.Local.sVariant.Declare(String,"")
+V.Local.iVar.Declare(Long,0)
+V.Local.iCNT.Declare(Long,0)
+V.Local.sSQL.Declare(String,"")
+V.Local.sGSSPart.Declare(String)
+V.Local.sRev.Declare(String)
+V.Local.sInvPart.Declare(String)
+V.Local.sInvItemID.Declare(String)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS, RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+V.Local.sVersion.Set(V.Local.sSQL(2).Trim)
+V.Local.sSQL.Redim(0,0)
+F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+
+F.Intrinsic.Control.If(V.Args.Page.Exists)
+		V.Local.sURL.Set(V.Args.Page)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/variants.json?limit=50", V.Local.sVersion.Trim, V.Local.sURL)
+'	V.Local.sURL.Set("https://benchmarkmedia.myshopify.com/admin/api/2020-01/variants.json?limit=50")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}\{1}PRODUCTS.json",V.Caller.TempDir,V.Caller.CompanyCode,V.Local.sFile)
+
+F.Communication.REST.SetProperty("HTTPMethod","GET")
+F.Communication.REST.SetProperty("User",V.Local.sUser)
+F.Communication.REST.SetProperty("Password",V.Local.sPass)
+F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+F.Communication.REST.SetProperty("Accept","application/json")
+F.Communication.REST.SetProperty("LocalFile",V.Local.sFile)
+F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+F.Communication.REST.Get(V.Local.sURL)
+
+F.Communication.REST.DoEvents()
+F.Communication.REST.ReadProperty("TransferredData",V.Local.sData)
+
+F.Communication.JSON.ParseFile(V.Local.sFile)
+V.Local.iLine.Set(1)
+F.Intrinsic.String.Build("/json/variants/[{0}]",V.Local.iLine,V.Local.sHeadPath)
+F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bFlag)
+
+'This portion is needed to get the next page
+F.Communication.REST.ReadProperty("PARSEDHEADERS",V.Local.sSetPage)
+'check for new outer delimiter in file
+F.Intrinsic.String.IsInString(V.Local.sSetPage, "Field*=*", True, V.Local.bFieldExists)
+F.Intrinsic.Control.If(V.Local.bFieldExists,=,True)
+	'if it's found, replace the value with no characters
+	F.Intrinsic.String.Replace(V.Local.sSetPage, "Field*=*", "", V.Local.sSetPage)
+F.Intrinsic.Control.EndIf
+'Check for new inner delimeter in file
+F.Intrinsic.String.IsInString(V.Local.sSetPage, "Value*=*", True, V.Local.bValueExists)
+F.Intrinsic.Control.If(V.Local.bValueExists,=,True)
+	'if it is found, replace the value with no characters
+	F.Intrinsic.String.Replace(V.Local.sSetPage, "Value*=*", "", V.Local.sSetPage)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.DoubleDelimitedSeek(V.Local.sSetPage,"!*!","*!*","Link",0,"",V.Local.sSetPage)
+
+F.Intrinsic.String.Split(V.Local.sSetPage,",",V.Local.sSetPage)
+F.Intrinsic.Control.If(V.Local.sSetPage.UBound,=,1)
+	F.Intrinsic.Variable.RemoveArrayElementByOrdinal(V.Local.sSetPage,0,V.Local.sSetPage)
+	V.Local.sSetPage.RedimPreserve(0,0)
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+	V.Local.sSetPage.Redim(0,0)
+	F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+	F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	F.Intrinsic.Control.If(V.Local.sSetPage(1).Trim,=,"rel="previous"")
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+	F.Intrinsic.Control.Else
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage, "Value*=*", "",V.Local.sPage)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.DoUntil(V.Local.bFlag,=,False)
+	'Web Id
+	F.Intrinsic.String.Build("/json/variants/[{0}]/id",V.Local.iLine,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	V.Local.sPartID.Set(V.Local.sTemp.Trim)
+	F.Intrinsic.String.Build("[WEBID] = '{0}'",V.Local.sPartID.Trim,V.Local.sFilter)
+	F.Data.DataView.Create("dtInv","dvCheck",22,V.Local.sFilter,"")
+	F.Intrinsic.Control.If(V.DataView.dtInv!dvCheck.RowCount,=,0)
+		
+		'iventory_item_id
+		'needed for inventory adjustments
+		F.Intrinsic.String.Build("/json/variants/[{0}]/inventory_item_id",V.Local.iLine,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",v.Local.sInvItemID)
+		
+		'we add the parts
+		'Sku = part numbers in GS
+		F.Intrinsic.String.Build("/json/variants/[{0}]/sku",V.Local.iLine,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		
+		'get the left 17 characters so we can find the top rev
+		F.Intrinsic.String.Left(V.Local.sTemp, 17, V.Local.sGSSPart)
+		F.Intrinsic.Control.If(V.Local.sGSSPart.Trim,<>,"")
+			F.Intrinsic.Control.If(V.Local.sGSSPart.Trim,<>,"null")
+				'add logic to pull the most recent active revision
+				F.Intrinsic.String.Build("SELECT TOP 1 LEFT(PART,17) AS PART, RIGHT(PART,3) AS REV FROM V_INVENTORY_MSTR WHERE LEFT(PART,17) = '{0}' AND FLAG_INACTIVE <> 'Y' ORDER BY REV DESC", V.Local.sGSSPart, V.Local.sSQL)
+				F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL, V.Local.sRet2)
+				F.Intrinsic.Control.If(V.Local.sRet2.Trim,<>,"")
+					F.Intrinsic.String.Split(V.Local.sRet2, "*!*", V.Local.sRet2)
+					V.Local.sGSSPart.Set(V.Local.sRet2(0))
+					V.Local.sRev.Set(V.Local.sRet2(1))
+					'rpad the part to make sure it's at the right length
+					F.Intrinsic.String.RPad(V.Local.sGSSPart, " ", 17, V.Local.sGSSPart)
+					F.Intrinsic.String.RPad(V.Local.sRev, " ",3,V.Local.sRev)
+				
+					'concat the part and rev together
+					F.Intrinsic.String.Build("{0}{1}", V.Local.sGSSPart, V.Local.sRev, V.Local.sInvPart)
+					F.Data.DataTable.AddRow("dtInv","WEBID",V.Local.sPartID,"INV_PART",V.Local.sInvPart, "INV_ITEM_ID", V.Local.sInvItemID.Trim)
+				'F.Intrinsic.Control.ElseIf(V.Local.sRet2.Trim,=,"")
+				'	F.Data.DataTable.AddRow("dtInv","WEBID",V.Local.sPartID,"INV_PART",V.Local.sTemp.Trim, "INV_ITEM_ID", V.Local.sInvItemID.Trim)
+				F.Intrinsic.Control.EndIf
+				
+				F.Intrinsic.Math.Add(V.Local.iLine,1,V.Local.iLine)
+				F.Intrinsic.String.Build("/json/variants/[{0}]",V.Local.iLine,V.Local.sLinePath)
+				F.Communication.JSON.HasXPath(V.Local.sLinePath,V.Local.bFlag)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.Math.Add(V.Local.iLine,1,V.Local.iLine)
+				F.Intrinsic.String.Build("/json/variants/[{0}]",V.Local.iLine,V.Local.sLinePath)
+				F.Communication.JSON.HasXPath(V.Local.sLinePath,V.Local.bFlag)
+				
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Math.Add(V.Local.iLine,1,V.Local.iLine)
+			F.Intrinsic.String.Build("/json/variants/[{0}]",V.Local.iLine,V.Local.sLinePath)
+			F.Communication.JSON.HasXPath(V.Local.sLinePath,V.Local.bFlag)
+			
+		F.Intrinsic.Control.EndIf
+		
+		
+	F.Intrinsic.Control.Else
+		'part was already recorded so we exit the loop and stop,since this is where we started the previous time this was ran
+		V.Local.bFlag.Set(False)
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataView.Close("dtInv","dvCheck")
+F.Intrinsic.Control.Loop
+
+F.Intrinsic.Control.If(V.Local.iLine,<,51)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.CallSub(PartGathering,"Page",V.Local.sPage)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.PartGathering.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.PartAssoc.Start
+F.Intrinsic.Control.Try
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+'We are going to use this table to keep track of the data we already have. 
+F.Data.DataTable.CreateFromSQL("dtInv","conts","Select WEBID,INV_PART, INV_ITEM_ID from GCG_6597_INV_ASSOC",True)
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.PartAssoc.End
+
+Program.Sub.SaveInfo.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.ODBC.conts.state,=,1)
+	F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.Data.DataTable.SaveToDB("dtInv","conts","GCG_6597_INV_ASSOC","WEBID")
+
+F.ODBC.Connection!conts.Execute("insert into GCG_6597_INV_ASSOC (WEBID,INV_PART) values ('','999-99999-999')")
+
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.SaveInfo.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2},{3}",V.Ambient.NewLine,V.Args.SubRoutine,V.Args.eNumber,V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date,V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+F.Intrinsic.Control.CallSub(Unload)
+Program.Sub.Error.End
+
+Program.Sub.Comments.Start
+${$5$}$2.2020.1.105$}$1
+${$6$}$acollins$}$20220210181224410$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHgmbpAPyUdk+KnWIw8qsx28f61Iiluew6m5PDlW+OMkSw==
+Program.Sub.Comments.End
