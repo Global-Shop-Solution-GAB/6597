@@ -1,0 +1,230 @@
+﻿Program.Sub.Preflight.Start
+V.Global.sShipVia.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'TJS February 2020
+'Customer: Benchmark Media Systems
+'AJC January 2022
+'Customer: Ashley Collins
+'This project will update the sales order on Shopify with the tracking information when an order is shipped. Part of the integration with Shopify.
+'This project requires the Order ID from Shopify to be in the USER_5 field from V_ORDER_HEADER.  Additionally, all lines must be fulfilled in GS.
+'Otherwise, shipment should take place in Shopify.
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,"28532")
+	'Tracking number is passed in 000138 and PO number (for the web id order) is passed in 000328 and Ship Via is passed in 000180
+'	F.Intrinsic.Control.CallSub(GrabOnlineInfo)
+'	F.Intrinsic.Control.CallSub(Verification)
+	F.Intrinsic.Control.CallSub(ProcessUpdate)
+	F.Intrinsic.Control.CallSub(Unload)
+'F.Intrinsic.Control.ElseIf(V.Caller.Hook,=,28530)
+	'hook number for pre save hook
+	'check to see if ship all lines checkbox checked
+	'if not, override and stop the shipment
+'	F.Intrinsic.Control.If(V.Passed.000109,=,"Partial Shipment")
+	'	F.Intrinsic.UI.Msgbox("You must ship all lines to continue. Please check 'Ship All Lines' and try again.", "Required Field")
+'	V.Passed.777777.Set(1)
+'		F.Intrinsic.Control.CallSub(Unload)
+'	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.GrabOnlineInfo.Start
+F.Intrinsic.Control.Try
+V.Local.sSQL.Declare
+V.Local.sHeadPath.Declare
+V.Local.bHeadExist.Declare
+V.Local.iHead.Declare(Long,1)
+V.Local.sRet.Declare
+V.Local.sUser.Declare
+V.Local.sPass.Declare
+V.Local.sFile.Declare
+V.Local.sVersion.Declare
+V.Local.sURL.Declare
+V.Local.sData.Declare
+V.Local.sWebOrderID.Declare
+V.Local.sTemp.Declare
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS,SINCE_DATE,RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+V.Local.sVersion.Set(V.Local.sSQL(3).Trim)
+V.Local.sSQL.Redim(0,0)
+F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+F.Intrinsic.String.Build("Select RTRIM(OrderWebID) from GCG_6597_ORDERS_XREF where RTRIM(OrderNo) = '{0}'",V.Passed.FIRST-ORDER.Trim,V.Local.sSQL)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sWebOrderID)
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.If(V.Local.sWebOrderID.Trim,=,"")
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.Build("https://benchmarkmedia.myshopify.com/admin/api/{0}/orders.json?ids={1}&status=any",V.Local.sVersion,V.Local.sWebOrderID.Trim,V.Local.sURL)
+F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/orders.json?ids={1}&status=any",V.Local.sVersion,V.Local.sWebOrderID.Trim,V.Local.sURL)
+
+
+F.Intrinsic.String.Build("{0}\{1}ORDS_POST.json",V.Caller.TempDir,V.Caller.CompanyCode,V.Local.sFile)
+
+F.Communication.REST.SetProperty("HTTPMethod","GET")
+F.Communication.REST.SetProperty("User",V.Local.sUser)
+F.Communication.REST.SetProperty("Password",V.Local.sPass)
+F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+F.Communication.REST.SetProperty("Accept","application/json")
+F.Communication.REST.SetProperty("LocalFile",V.Local.sFile)
+F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+F.Communication.REST.Get(V.Local.sURL)
+
+F.Communication.REST.DoEvents()
+F.Communication.REST.ReadProperty("TransferredData",V.Local.sData)
+
+F.Communication.JSON.ParseFile(V.Local.sFile)
+F.Intrinsic.String.Build("/json/orders/[{0}]",V.Local.iHead,V.Local.sHeadPath)
+F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+
+F.Intrinsic.Control.If(V.Local.bHeadExist,=,False)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+V.Global.sShipVia.Set(V.Passed.000180.Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GrabOnlineInfo.End
+
+Program.Sub.Verification.Start
+F.Intrinsic.Control.Try
+'We want to verify that there is tracking information and Ship Via information
+F.Intrinsic.Control.If(V.Passed.000138.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("No Tracking Number found on the screen. The order was not updated with tracking information on Shopify.","TRACKING NUMBER ERROR")
+	F.Intrinsic.Control.Callsub(Unload)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Passed.000180,=,"")
+	F.Intrinsic.UI.Msgbox("No Ship Via found on the screen. The order was not updated with ship via information on Shopify.","TRACKING NUMBER ERROR")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Verification.End
+
+Program.Sub.ProcessUpdate.Start
+F.Intrinsic.Control.Try
+V.Local.bUPS.Declare(Boolean, False)
+V.Local.bDHL.Declare(Boolean, False)
+V.Local.bUSPS.Declare(Boolean, False)
+V.Local.bFedex.Declare(Boolean, False)
+V.Local.sUser.Declare(String,"")
+V.Local.sPass.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sTest.Declare(String,"")
+V.Local.sRet.Declare(String,"")
+V.Local.sURL.Declare(String,"")
+V.Local.sBody.Declare(String,"")
+V.Local.sVia.Declare(String,"")
+V.Local.sSQL.Declare(String,"")
+V.Local.sVersion.Declare(String,"")
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+'F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS,RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+'F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+'V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+'V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+'V.Local.sVersion.Set(V.Local.sSQL(2).Trim)
+'V.Local.sSQL.Redim(0,0)
+'F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+'F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+'F.Communication.REST.SetProperty("HTTPMethod","POST")
+'F.Communication.REST.SetProperty("User",V.Local.sUser)
+'F.Communication.REST.SetProperty("Password",V.Local.sPass)
+'F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+'F.Communication.REST.SetProperty("Accept","application/json")
+'F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+'V.Local.sVia.Set(V.Global.sShipVia)
+
+''check the ship via to see what needs to be passed in the API call
+'F.Intrinsic.String.IsInString(V.Local.sVia, "DHL", True, V.Local.bDHL)
+'F.Intrinsic.Control.If(V.Local.bDHL,=,True)
+'	V.Local.sVia.Set("DHL")
+'F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.IsInString(V.Local.sVia, "UPS", True, V.Local.bUPS)
+'F.Intrinsic.Control.If(V.Local.bUPS,=,True)
+'	V.Local.sVia.Set("UPS")
+'F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.IsInString(V.Local.sVia, "USPS", True, V.Local.bUSPS)
+'F.Intrinsic.Control.If(V.Local.bUSPS,=,True)
+'	V.Local.sVia.Set("USPS")
+'F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.IsInString(V.Local.sVia, "FEDEX", True, V.Local.bFedex)
+'F.Intrinsic.Control.If(V.Local.bFedex,=,True)
+'	V.Local.sVia.Set("FEDEX")
+'F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.Build("Select TOP 1 USER_5 from V_ORDER_HEADER where ORDER_NO = '{0}'",V.Passed.FIRST-ORDER,V.Local.sSql)
+'F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSql,V.Local.sRet)
+
+'F.ODBC.Connection!conts.Close
+
+'F.Intrinsic.Control.If(V.Local.sRet.Long,=,0)
+'	F.Intrinsic.Control.CallSub(Unload)
+'F.Intrinsic.Control.EndIf
+'Function.Intrinsic.Debug.InvokeDebugger
+'Function.Intrinsic.Debug.Stop
+
+'F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/orders/{1}/fulfillments.json",V.Local.sVersion.Trim,V.Local.sRet.Long,V.Local.sURL)
+
+''We are going to build a json script that will update the order in Shopify with the tracking information.
+'F.Intrinsic.String.Build("{{0}fulfillment{0}:{{0}location_id{0}:45161428,{0}tracking_number{0}:{0}{2}{0},{0}tracking_company{0}:{0}{1}{0}}}",V.Ambient.DblQuote,V.Local.sVia,V.Passed.000138.Trim,V.Local.sBody)
+''***********************************************************************************************************
+'F.Communication.REST.SetProperty("PostData",V.Local.sBody)
+'F.Communication.REST.Post(V.Local.sURL)
+
+'F.Communication.REST.DoEvents()
+'F.Communication.REST.ReadProperty("TransferredData",V.Local.sTemp)
+
+'add logic to set the status to fulfilled when a user ships from GSS
+F.Intrinsic.String.Build("Update GCG_6597_ORDERS_XREF set LAST_FIN_STATUS = 'FULFILLED' where ORDERNO = '{0}'",V.Passed.FIRST-ORDER.Trim,V.Local.sSQL)
+F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessUpdate.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2},{3}",V.Ambient.NewLine,V.Args.SubRoutine,V.Args.eNumber,V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date,V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+F.Intrinsic.Control.CallSub(Unload)
+Program.Sub.Error.End
+
+Program.Sub.Comments.Start
+${$5$}$2.2020.1.105$}$1
+${$6$}$acollins$}$20220210212157483$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHi0QN4ZdL4FnQmb/PHS05csWTBRp+yxEX2fkqH8QUuQVA==
+Program.Sub.Comments.End
