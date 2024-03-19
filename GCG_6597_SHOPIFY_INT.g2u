@@ -1,0 +1,2513 @@
+﻿Program.Sub.Preflight.Start
+Program.External.Include.Library("ORDUPL.lib")
+Program.External.Include.Library("6013.lib")
+V.Global.sBody.Declare(String,"")
+V.Global.sError.Declare(String,"")
+V.Global.sCANX.Declare(String,"")
+V.Global.sFulFail.Declare(String,"")
+V.Global.sFulSuccess.Declare(String,"")
+V.Global.bFail.Declare(Boolean, False)
+V.Global.sWarning.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'TJS February 2020
+'Customer: Benchmark Media Systems
+'AJC January 2022
+'Customer: Grovtec
+'Business Case:
+'Customer uses shopify and has a very fluid shipping process to fulfill orders same/next day and need the ability to do the
+'following:
+'1. Import new sales orders from Shopify to Global Shop.
+'a. Create NEW Customer master record when order is imported if ID does not exist.
+'2. Void Order in Global Shop if Voided in Shopify.
+'3. Capture Payment Status in Shopify and store/update on Order Header user-defined-field in Global Shop so it is
+'visible in the ERP.
+'4. Process Shipment and Relieve inventory for Sales Order in GSS if Shipment is Fulfilled in Shopify. - Removed for Grovtec
+'5. Fulfill shipment in Shopify if Order is shipped from Global Shop.
+
+
+'This is to make sure we can use the Web Importer,assuming they have a license for it.
+F.Intrinsic.Control.CallSub(CheckParamsTxt)
+
+'We then gather what info we have in the GS custom table. This table's only purpose is to keep track of what has already been uploaded into GS so we dont create duplicates.
+F.Intrinsic.Control.CallSub(GSInfo)
+
+'We are going to begin by gathering the information from Shopify through Rest API. 
+F.Intrinsic.UI.InvokeWaitDialog("Gathering information from Shopify.","Importing Shopify Orders")
+F.Intrinsic.Control.CallSub(CollectOrders)
+
+'Moved to new location
+'F.Intrinsic.Control.CallSub(ProcessNewEntries)
+
+'We send the emails to the users in the table
+F.Intrinsic.Control.CallSub(SendEmails)
+
+F.Intrinsic.UI.CloseWaitDialog
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.CheckParamsTxt.Start
+F.Intrinsic.Control.Try
+V.Local.bExists.Declare(Boolean)
+V.Local.sPath.Declare(String)
+
+F.Intrinsic.String.Build("{0}\GSSPARAM{1}.txt",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sPath)
+F.Intrinsic.File.Exists(V.Local.sPath,V.Local.bExists)
+
+F.Intrinsic.Control.If(V.Local.bExists.Not)
+	F.Intrinsic.Control.CallSub(CreateParamsTxt)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckParamsTxt.End
+
+Program.Sub.CreateParamsTxt.Start
+F.Intrinsic.Control.Try
+V.Local.sParams.Declare(String)
+V.Local.sPath.Declare(String)
+
+F.Intrinsic.String.Build("WEB ORDER DIRECTORY   = {1}\WEB_ORDERS\{2}{0}WEB ERROR DIRECTORY   = {1}\WEB_ORDERS\{2}\WEB_ERRORS{0}WEB CONVERTED DIR     = {1}\WEB_ORDERS\{2}\CONVERTED{0}WEB UPLOADED DIRECTORY= {1}\WEB_ORDERS\{2}\UPLOADED{0}EMAIL FROM ADDRESS    = {0}EMAIL TO ADDRESS      = ",V.Ambient.NewLine,V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sParams)
+F.Intrinsic.String.Build("{0}\GSSPARAM{1}.txt",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sPath)
+F.Intrinsic.File.String2File(V.Local.sPath,V.Local.sParams)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.CreateParamsTxt.End
+
+Program.Sub.GSInfo.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+
+'This is to verify that the customer exists in Global Shop
+F.Data.DataTable.CreateFromSQL("dtCusts","conts","Select RTRIM(LTRIM(UCASE(A.NAME_CUSTOMER))) as NAME_CUSTOMER,UCASE(A.CUSTOMER) as CUSTOMER,RTRIM(LTRIM(B.EMAIL)) as EMAIL from V_CUSTOMER_MASTER A left join V_CUSTOMER_SALES B on A.CUSTOMER = B.CUSTOMER",True)
+
+'We are going to create a datatable with the info in GS so we have the customer entries that already exist and we can add the new entries.
+F.Data.DataTable.CreateFromSQL("dtGSOrds","conts","Select OrderWebID,Customer,CustExtID,OrderNO,OrderLine,OrdDate,QtyOrdered,PartNo,Rev,Loc,LineKey,Last_Fin_Status,Line_Item_ID,Cast('0' as Bit) as NewEntry from GCG_6597_Orders_XRef",True)
+
+F.Data.Dictionary.CreateFromSQL("dicOrderIDs","conts","Select distinct RTRIM(LTRIM(OrderWebID)),RTRIM(LTRIM(OrderWebID)) from GCG_6597_ORDERS_XREF")
+F.Data.Dictionary.SetDefaultReturn("dicOrderIDs","-1")
+
+'We need to use the part number in Global Shop to create the order,so we have these dictionaries to fill in from the data that we collect from the website
+F.Data.Dictionary.CreateFromSQL("dicParts","conts","Select RTRIM(LTRIM(WEBID)) as WEBID,INV_PART from GCG_6597_INV_ASSOC")
+F.Data.Dictionary.SetDefaultReturn("dicParts","")
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GSInfo.End
+
+Program.Sub.CollectOrders.Start
+F.Intrinsic.Control.Try
+#Region "ColOrderVariables"
+V.Local.bFieldExists.Declare(Boolean, False)
+V.Local.bValueExists.Declare(Boolean, False)
+V.Local.iRet.Declare(Long)
+V.Local.iCon.Declare(Long)
+V.Local.iCnt.Declare(Long)
+V.Local.iCnt2.Declare(Long)
+V.Local.sUser.Declare(String,"")
+V.Local.sUserName.Declare(String,"")
+V.Local.sPass.Declare(String,"")
+V.Local.sURL.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sWebID.Declare(String,"")
+V.Local.sData.Declare(String,"")
+V.Local.sRet.Declare(String,"")
+V.Local.sFile.Declare(String,"")
+V.Local.sFilter.Declare(String,"")
+V.Local.sFinStatus.Declare(String,"")
+V.Local.sCustName.Declare(String,"")
+V.Local.sCustLName.Declare(String,"")
+V.Local.sBCustName.Declare(String,"")
+V.Local.sCustNo.Declare(String,"")
+V.Local.sNumber.Declare(String,"")
+V.Local.sCreateDate.Declare(String,"")
+V.Local.sCurr.Declare(String,"")
+V.Local.sCompany.Declare(String,"")
+V.Local.sBillAddr1.Declare(String,"")
+V.Local.sBillAddr2.Declare(String,"")
+V.Local.sCity.Declare(String,"")
+V.Local.sProvince.Declare(String,"")
+V.Local.sZip.Declare(String,"")
+V.Local.sBCountry.Declare(String,"")
+V.Local.sBEmail.Declare(String,"")
+V.Local.sBPhone.Declare(String,"")
+V.Local.sSAttn.Declare(String,"")
+V.Local.sAttn.Declare(String,"")
+V.Local.sSCompany.Declare(String,"")
+V.Local.sSAddr1.Declare(String,"")
+V.Local.sSAddr2.Declare(String,"")
+V.Local.sSCity.Declare(String,"")
+V.Local.sSState.Declare(String,"")
+V.Local.sSZip.Declare(String,"")
+V.Local.sSCountry.Declare(String,"")
+V.Local.sWebOrderID.Declare(String,"")
+V.Local.sIntlFlag.Declare(String,"")
+V.Local.sPCode.Declare(String,"")
+V.Local.sBCC.Declare(String,"")
+V.Local.sSCC.Declare(String,"")
+V.Local.sSql.Declare(String,"")
+V.Local.sOrdNo.Declare(String,"")
+V.Local.sSource.Declare(String,"")
+V.Local.sWebOrdNum.Declare(String,"")
+V.Local.sNullCheck.Declare(String,"")
+V.Local.sBAttn.Declare(String,"")
+V.Local.sContact.Declare(String,"")
+V.Local.sShipVia.Declare(String,"")
+V.Local.sFreight.Declare(String,"")
+V.Local.iHead.Declare(Long,1)
+V.Local.iHeadMax.Declare(Long,1)
+V.Local.iWebID.Declare(Long,0)
+V.Local.iLines.Declare(Long,0)
+V.Local.sHeadPath.Declare(String,"")
+V.Local.bHeadExist.Declare(Boolean,False)
+V.Local.bExist.Declare(Boolean,False)
+V.Local.iCounter.Declare(Long,0)
+V.Local.iOrdCheck.Declare(Long,0)
+V.Local.sPage.Declare(String,"")
+V.Local.sSetPage.Declare(String,"")
+V.Local.sCustPhone.Declare(String,"")
+V.Local.sSinceDate.Declare(String,"")
+V.Local.sVersion.Declare(String,"")
+V.Local.bXPath.Declare(Boolean, False)
+V.Local.sTotTax.Declare
+V.Local.sLine.Declare
+V.Local.sCustPO.Declare(String,"")
+V.Local.sShippingText.Declare(String)
+V.Local.sHeaderText.Declare(String,"")
+V.Local.fExtension.Declare(Float)
+V.Local.fDiscAmt.Declare(Float)
+V.Local.fDiscPrice.Declare(Float)
+V.Local.sOrderLineInfo.Declare(String)
+V.Local.sDiscInfo.Declare(String)
+V.Local.fDiscount.Declare(Float)
+v.Local.fPrice.Declare(Float)
+V.Local.fQtyOrdered.Declare(Float)
+V.Local.fNoDiscExtension.Declare(Float)
+V.Local.fNegExtension.Declare(Float)
+V.Local.sImportFileLoc.Declare(String)
+V.Local.sCompanyCode.Declare(String)
+V.Local.sFileList.Declare(String)
+V.Local.sFolderPath.Declare(String)
+V.Local.sLeftoverFiles.Declare(String)
+V.Local.sSql2.Declare(String)
+V.Local.sRet2.Declare(String)
+V.Local.sRet3.Declare(String)
+V.Local.bImportFolderExists.Declare(Boolean, False)
+V.Local.iCnt3.Declare(Long)
+V.Local.sRemWebID.Declare(String)
+V.Local.sFQP.Declare(String)
+
+#End Region ' ColOrderVariables
+
+#Region "ColOrderAPI"
+
+f.Intrinsic.Control.If(V.ODBC.conts.Exists,=,True)
+	F.ODBC.Connection!conts.Close
+f.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS,SINCE_DATE,RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+F.Intrinsic.String.Format(V.Local.sSql(2).Trim,"YYYY-MM-DD",V.Local.sSinceDate)
+F.Intrinsic.String.Build("{0}T00:00:00-05:00",V.Local.sSinceDate,V.Local.sSinceDate)
+V.Local.sVersion.Set(V.Local.sSQL(3).Trim)
+V.Local.sSQL.Redim(0,0)
+F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+
+F.Intrinsic.Control.If(V.Args.Page.Exists)
+	V.Local.sURL.Set(V.Args.Page)
+F.Intrinsic.Control.Else
+'	V.Local.sURL.Set("https://grovtec-firearms-accessories.myshopify.com/admin/api/2020-01/orders.json?ids=4240670359623&status=any")
+	'today's call
+'	V.Local.sURL.Set("https://grovtec-firearms-accessories.myshopify.com/admin/api/2020-10/orders.json?ids=4240758964295&status=any")
+	
+	'new order
+'	V.Local.sURL.Set("https://grovtec-firearms-accessories.myshopify.com/admin/api/2020-01/orders.json?ids=4248734466119&status=any")
+'	F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/orders.json?created_at_min=2022-01-28T00:00:00-10:00&status=any",V.Local.sVersion,V.Local.sURL)
+	F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/orders.json?created_at_min={1}&status=any",V.Local.sVersion,V.Local.sSinceDate,V.Local.sURL)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}\{1}ORDS.json",V.Caller.TempDir,V.Caller.CompanyCode,V.Local.sFile)
+
+F.Communication.REST.SetProperty("HTTPMethod","GET")
+F.Communication.REST.SetProperty("User",V.Local.sUser)
+F.Communication.REST.SetProperty("Password",V.Local.sPass)
+F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+F.Communication.REST.SetProperty("Accept","application/json")
+F.Communication.REST.SetProperty("LocalFile",V.Local.sFile)
+F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+F.Communication.REST.Get(V.Local.sURL)
+
+F.Communication.REST.DoEvents()
+F.Communication.REST.ReadProperty("TransferredData",V.Local.sData)
+
+F.Communication.JSON.ParseFile(V.Local.sFile)
+F.Intrinsic.String.Build("/json/orders/[{0}]",V.Local.iHead,V.Local.sHeadPath)
+F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+
+'This portion is needed to get the next page
+F.Communication.REST.ReadProperty("PARSEDHEADERS",V.Local.sSetPage)
+'check for new outer delimiter in file
+F.Intrinsic.String.IsInString(V.Local.sSetPage, "Field*=*", True, V.Local.bFieldExists)
+F.Intrinsic.Control.If(V.Local.bFieldExists,=,True)
+	'if it's found, replace the value with no characters
+	F.Intrinsic.String.Replace(V.Local.sSetPage, "Field*=*", "", V.Local.sSetPage)
+F.Intrinsic.Control.EndIf
+'Check for new inner delimeter in file
+F.Intrinsic.String.IsInString(V.Local.sSetPage, "Value*=*", True, V.Local.bValueExists)
+F.Intrinsic.Control.If(V.Local.bValueExists,=,True)
+	'if it is found, replace the value with no characters
+	F.Intrinsic.String.Replace(V.Local.sSetPage, "Value*=*", "", V.Local.sSetPage)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.DoubleDelimitedSeek(V.Local.sSetPage,"!*!","*!*","Link",0,"",V.Local.sSetPage)
+F.Intrinsic.String.Split(V.Local.sSetPage,",",V.Local.sSetPage)
+F.Intrinsic.Control.If(V.Local.sSetPage.UBound,=,1)
+	F.Intrinsic.Variable.RemoveArrayElementByOrdinal(V.Local.sSetPage,0,V.Local.sSetPage)
+	V.Local.sSetPage.RedimPreserve(0,0)
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+	V.Local.sSetPage.Redim(0,0)
+	F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+	F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	F.Intrinsic.Control.If(V.Local.sSetPage(1).Trim,=,"rel="previous"")
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+	F.Intrinsic.Control.Else
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+#End Region 'ColOrderAPI
+
+#Region "ColOrdLoop"
+
+'add logic to clean up any files that may be in the web importer file location at the end of the previous process
+V.Local.sCompanyCode.Set(V.Caller.CompanyCode)
+F.Intrinsic.String.Build("{0}\WEB_ORDERS\{1}\", V.Caller.FilesDir,V.Local.sCompanyCode.Trim, V.Local.sFolderPath)
+F.Intrinsic.File.DirExists(V.Local.sFolderPath, V.Local.bImportFolderExists)
+F.Intrinsic.Control.If(V.Local.bImportFolderExists,=,True)
+	'pull the file list from the location
+	F.Intrinsic.File.GetFileList(V.Local.sFolderPath, V.Local.sFileList)
+	F.Intrinsic.Control.If(V.Local.sFileList.Trim,<>,"")
+		'split the file list
+		F.Intrinsic.String.Split(V.Local.sFileList, ":", V.Local.sFileList)
+		F.Intrinsic.Control.For(V.Local.iCnt3, V.Local.sFileList.UBound,0,-1)
+			'convert the file to a string
+			F.Intrinsic.String.Build("{0}{1}", V.Local.sFolderPath, V.Local.sFileList(V.Local.iCnt3).Trim, V.Local.sFQP)
+			F.Intrinsic.File.File2String(V.Local.sFQP, V.Local.sRet2)
+			'grab the left 193 characters as that excludes everything to user field 5, which is where the webid is stored
+			F.Intrinsic.String.Left(V.Local.sRet2, 193, V.Local.sLeftoverFiles)
+			'get the right 30 characters because that's the user field 5 field
+			F.Intrinsic.String.Right(V.Local.sLeftoverFiles, 30, V.Local.sRemWebID)
+			F.Intrinsic.Control.If(V.Local.sRemWebID.Trim,<>,"")
+				'check to see if the order webid exists in the custom table
+				F.Intrinsic.String.Build("SELECT * FROM GCG_6597_ORDERS_XREF WHERE ORDERWEBID LIKE '%{0}%'", V.Local.sRemWebID.Trim, V.Local.sSql2)
+				F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSql2, V.Local.sRet3)
+				F.Intrinsic.Control.If(V.Local.sRet3.Trim,<>,"")
+					'if there is already a record, delete the file
+					F.Intrinsic.File.DeleteFile(V.Local.sFQP)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Next(V.Local.iCnt3)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.DoUntil(V.Local.bHeadExist,=,False)
+	'Get the webID first. If we already have that recorded,we do not need to continue with that entry. We may need to make modifications if the order already exists but changes have been made. We can verify this by checking the date last modified.
+	F.Intrinsic.String.Build("/json/orders/[{0}]/id",V.Local.iHead,V.Local.sTemp)
+    F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+    F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	V.Local.sWebID.Set(V.Local.sTemp)
+	
+#Region "CollectNewOrder"
+	
+	F.Intrinsic.Control.If(V.Dictionary.dicOrderIDs![V.Local.sWebID.Long].Trim,=,-1)
+	
+		'Remove new orders coming in as cancelled. (This can be caused by editting lines in Shopify prior to uploading to GS)
+		F.Intrinsic.String.Build("/json/orders/[{0}]/cancelled_at",V.Local.iHead,V.Local.sTemp)
+    	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+    	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+    	
+		F.Intrinsic.Control.If(V.Local.sTemp.Trim,<>,null)
+			F.Intrinsic.Control.GoTo("ErrorBypass")
+		F.Intrinsic.Control.EndIf
+		
+		'Shopify "human" order number. Deprecated in favor of the order "name". Still collecting for possible future reference.
+		F.Intrinsic.String.Build("/json/orders/[{0}]/order_number",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    V.Local.iOrdCheck.Set(V.Local.sTemp.Long)
+'	    F.Intrinsic.String.Build("WEB-{0}",V.Local.sTemp,V.Local.sTemp)
+'	    F.Intrinsic.String.RPad(V.Local.sTemp," ",15,V.Local.sWebOrdNum)
+
+		'Collecting total sales tax.  We will enter this as a line item to the SO
+'		F.Intrinsic.String.Build("/json/orders/[{0}]/total_tax",V.Local.iHead,V.Local.sTemp)
+'		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+'		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+'	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+'	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+'	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	 '   V.Local.sTotTax.Set(V.Local.sTemp.Float)
+
+		'Order number from the website. To be displayed in the Order Sort 1 field.
+		F.Intrinsic.String.Build("/json/orders/[{0}]/name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"#","",V.Local.sTemp)
+	    F.Intrinsic.String.RPad(V.Local.sTemp," ",15,V.Local.sWebOrdNum)
+	    
+		F.Intrinsic.String.Build("Adding orders from Shopify. Currently working on order {0}",V.Local.sWebOrdNum,V.Local.sTemp)
+		F.Intrinsic.UI.ChangeWaitStatus(V.Local.sTemp)
+		
+		'We make sure the customer exists in the database. We use the company name from Shopify. If the company name is blank,we use the name on the account that created the order.
+		F.Intrinsic.String.Build("/json/orders/[{0}]/customer/id",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bXPath)
+		F.Intrinsic.Control.If(V.Local.bXPath,=,False)
+			F.Intrinsic.Control.CallSub(JSONError,"sWebOrdNum",V.Local.sWebOrdNum,"JSONError","Order missing customer data.")
+			F.Intrinsic.Control.GoTo("ErrorBypass")
+		F.Intrinsic.Control.EndIf
+		
+		
+		F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/company",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+'	    F.Intrinsic.String.Replace(V.Local.sTemp,"\u","",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp.UCase,"\U0026","&",V.Local.sTemp)
+		F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sBCustName)
+	    F.Intrinsic.String.Left(V.Local.sBCustName.Trim,30,V.Local.sBCustName)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/first_name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bXPath)
+		F.Intrinsic.Control.If(V.Local.bXPath,=,False)
+			F.Intrinsic.Control.CallSub(JSONError,"sWebOrdNum",V.Local.sWebOrdNum,"JSONError","Order missing shipping address.")
+			F.Intrinsic.Control.GoTo("ErrorBypass")
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)		    
+		F.Intrinsic.String.Replace(V.Local.sTemp.UCase,"\U0026","&",V.Local.sTemp)
+'		F.Intrinsic.String.Replace(V.Local.sTemp,"\u","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sCustName)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sCustName)
+	    V.Local.sCustName.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sCustName.Trim,30,V.Local.sCustName)
+'	    F.Intrinsic.String.Split(V.Local.sCustName.Trim," ", V.Local.sTemp)
+	'    V.Local.sCustLName.Set(V.Local.sTemp(1).Trim)
+	    
+	    
+'		It appears that the company field could have a blank string or a value of "null",depending on how the user created their account from the website. We replace null and check for blank against the company 
+		F.Intrinsic.String.Replace(V.Local.sBCustName.UCase,"NULL","",V.Local.sBCustName)
+		F.Intrinsic.Control.If(V.Local.sBCustName.Trim,=,"")
+			V.Local.sBCustName.Set(V.Local.sCustName)
+			V.Local.sSource.Set("name")
+		F.Intrinsic.Control.Else
+			V.Local.sSource.Set("company")
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/phone",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,")","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"(","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"+","",V.Local.sTemp)
+	    F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sBPhone)
+	    F.Intrinsic.String.RPad(V.Local.sBPhone," ",13,V.Local.sBPhone)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/customer/email",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.String.Left(V.Local.sTemp,43,V.Local.sBEmail)
+	    F.Intrinsic.String.RPad(V.Local.sBEmail," ",43,V.Local.sBEmail)
+		
+	'	F.Intrinsic.String.Build("[NAME_CUSTOMER]= '{0}' and [EMAIL]= '{1}'",V.Local.sCustName.UCase.Trim,V.Local.sBEmail.Trim,V.Local.sFilter)
+	'	F.Data.DataView.Create("dtCusts","dvCusts",22,V.Local.sFilter,"")
+
+	'	F.Intrinsic.Control.If(V.DataView.dtCusts!dvCusts.RowCount,=,0)
+	'		'We need to create the customer
+	'		F.Intrinsic.Control.CallSub(CreateCustomer,"Head",V.Local.iHead,"Source",V.Local.sSource)
+	'		V.Local.sCustNo.Set(V.Args.CustomerNumber)
+	'	F.Intrinsic.Control.Else
+			V.Local.sCustNo.Set("GTOL")
+	'	F.Intrinsic.Control.EndIf
+		
+	'	F.Data.DataView.Close("dtCusts","dvCusts")
+	    
+		'Financial Status - To be displayed in Order Header ORDER_SORT_2 field
+		F.Intrinsic.String.Build("/json/orders/[{0}]/financial_status",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sFinStatus)
+	    
+		'Currency
+		F.Intrinsic.String.Build("/json/orders/[{0}]/currency",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sCurr)
+	    
+		'Date Created
+		F.Intrinsic.String.Build("/json/orders/[{0}]/created_at",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Split(V.Local.sTemp,"T",V.Local.sTemp)
+		F.Intrinsic.String.Split(V.Local.sTemp(0),"-",V.Local.sTemp)
+		V.Local.sTemp.RedimPreserve(0,2)
+		F.Intrinsic.String.Right(V.Local.sTemp(0),4,V.Local.sTemp(0))
+		F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sTemp(0),V.Local.sTemp(1),V.Local.sTemp(2),V.Local.sCreateDate)
+	    
+		'Billing info -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+	    'For the contact name,we use the customer name and last name
+		F.Intrinsic.String.Build("/json/orders/[{0}]/customer/first_name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sContact)
+	    F.Intrinsic.String.RPad(V.Local.sContact," ",30,V.Local.sContact)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/customer/last_name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Build("{0} {1}",V.Local.sContact.Trim,V.Local.sTemp,V.Local.sContact)
+	    F.Intrinsic.String.Left(V.Local.sContact,30,V.Local.sContact)
+	    F.Intrinsic.String.RPad(V.Local.sContact," ",30,V.Local.sContact)
+
+		'Shipping Address--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/first_name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSAttn)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/last_name",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+    	 V.Local.sCustLName.Set(V.Local.sTemp.Trim)
+	    F.Intrinsic.String.Build("{0} {1}",V.Local.sSAttn,V.Local.sTemp,V.Local.SsAttn)
+	    F.Intrinsic.String.Left(V.Local.sSAttn,30,V.Local.sSAttn)
+	    F.Intrinsic.String.RPad(V.Local.sSAttn," ",30,V.Local.sSAttn)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/address1",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sSAddr1)
+	    F.Intrinsic.String.RPad(V.Local.sSAddr1," ",30,V.Local.sSAddr1)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/address2",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.Control.If(V.Local.sTemp,=,"null")
+			V.Local.sTemp.Set("")
+		F.Intrinsic.Control.EndIf
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sSAddr2)
+	    F.Intrinsic.String.RPad(V.Local.sSAddr2," ",30,V.Local.sSAddr2)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/city",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,15,V.Local.sSCity)
+	    F.Intrinsic.String.RPad(V.Local.sSCity," ",15,V.Local.sSCity)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/province_code",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sSState)
+	    F.Intrinsic.String.RPad(V.Local.sSState," ",2,V.Local.sSState)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/zip",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sSZip)
+	    F.Intrinsic.String.RPad(V.Local.sSZip," ",13,V.Local.sSZip)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/country",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,12,V.Local.sSCountry)
+	    F.Intrinsic.String.RPad(V.Local.sSCountry," ",12,V.Local.sSCountry)
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/country_code",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    	V.Local.sTemp.Set(V.Args.Return)
+	    F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sSCC)
+	    F.Intrinsic.String.RPad(V.Local.sSCC," ",2,V.Local.sSCC)
+	    
+	    F.Intrinsic.Control.If(V.Local.sSCC,<>,"US")
+	    	V.Local.sIntlFlag.Set("Y")
+	    F.Intrinsic.Control.Else
+	    	V.Local.sIntlFlag.Set("")
+	    F.Intrinsic.Control.EndIf
+	    
+	    F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address",V.Local.iHead,V.Local.sTemp)
+	    F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bExist)
+	    
+	    F.Intrinsic.Control.If(V.Local.bExist,=,True)
+		    F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/name",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp.Trim,30,V.Local.sBAttn)
+		    F.Intrinsic.String.RPad(V.Local.sBAttn," ",30,V.Local.sBAttn)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/address1",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sBillAddr1)
+		    F.Intrinsic.String.RPad(V.Local.sBillAddr1," ",30,V.Local.sBillAddr1)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/address2",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+			F.Intrinsic.Control.If(V.Local.sTemp,=,"null")
+				V.Local.sTemp.Set("")
+			F.Intrinsic.Control.EndIf
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sBillAddr2)
+		    F.Intrinsic.String.RPad(V.Local.sBillAddr2," ",30,V.Local.sBillAddr2)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/city",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,15,V.Local.sCity)
+		    F.Intrinsic.String.RPad(V.Local.sCity," ",15,V.Local.sCity)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/company",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,15,V.Local.sCompany)
+		    F.Intrinsic.String.RPad(V.Local.sCompany," ",15,V.Local.sCompany)
+		    
+'			F.Intrinsic.String.Build("/json/orders/[{0}]/customer/default_address/province",V.Local.iHead,V.Local.sTemp)
+'			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+'			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+'		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+'		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+'		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+'		    F.Intrinsic.String.Left(V.Local.sTemp,12,V.Local.sProvince)
+'		    F.Intrinsic.String.RPad(V.Local.sProvince," ",12,V.Local.sProvince)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/province_code",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sPCode)
+		    F.Intrinsic.String.RPad(V.Local.sPcode," ",2,V.Local.sPCode)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/zip",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sZip)
+		    F.Intrinsic.String.RPad(V.Local.sZip," ",13,V.Local.sZip)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/country",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,12,V.Local.sBCountry)
+		    F.Intrinsic.String.RPad(V.Local.sBCountry," ",12,V.Local.sBCountry)
+		    
+			F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/country_code",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    	    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+    		V.Local.sTemp.Set(V.Args.Return)
+		    F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sBCC)
+		    F.Intrinsic.String.RPad(V.Local.sBCC," ",2,V.Local.sBCC)
+	    
+	    F.Intrinsic.Control.Else
+	    	'If there is no billing address,we will just use the shipping address
+		    V.Local.sBAttn.Set(V.Local.sSAttn)
+		    V.Local.sBillAddr1.Set(V.Local.sSAddr1)
+		    V.Local.sBillAddr2.Set(V.Local.sSAddr2)
+		    V.Local.sCity.Set(V.Local.sSCity)
+		    V.Local.sPCode.Set(V.Local.sSState)
+			V.Local.sZip.Set(V.Local.sSZip)
+			V.Local.sBCountry.Set(V.Local.sSCountry)
+			V.Local.sBCC.Set(V.Local.sSCC)
+		    
+	    F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_lines/[1]",V.Local.iHead,V.Local.sTemp)
+			F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bXPath)
+			F.Intrinsic.Control.If(V.Local.bXPath,=,False)
+				F.Intrinsic.Control.CallSub(JSONError,"sWebOrdNum",V.Local.sWebOrdNum,"JSONError","Order missing shipping lines.")
+				F.Intrinsic.Control.GoTo("ErrorBypass")
+			F.Intrinsic.Control.EndIf	    
+			
+	    'Ship Via and Freight
+	    
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_lines/[1]/title",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    F.Communication.Misc.EncodeToString(3,V.Local.sTemp,V.Local.sTemp)
+	    
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"%ae","",V.Local.sTemp)
+        F.Intrinsic.String.Replace(V.Local.sTemp, "%99", "", V.Local.sTemp)
+        F.Intrinsic.String.Replace(V.Local.sTemp, "%a9", "", V.Local.sTemp)
+        F.Intrinsic.String.Replace(V.Local.sTemp, "%92", "", V.Local.sTemp)
+	    F.Communication.Misc.DecodeToString(3,V.Local.sTemp,V.Local.sTemp)
+	    F.Intrinsic.String.Left(V.Local.sTemp.Trim,20,V.Local.sShipVia)
+	    F.Intrinsic.String.RPad(V.Local.sShipVia," ",20,V.Local.sShipVia)
+	    V.Local.sShippingText.Set("")
+	    F.Intrinsic.String.Build("Online Order{0}{0}{1}", V.Ambient.NewLine, V.Local.sShipVia, V.Local.sShippingText)
+   
+		F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_lines/[1]/price",V.Local.iHead,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	    'F.Intrinsic.Math.Round(V.Local.sTemp.Float,2,V.Local.sTemp)
+	    F.Intrinsic.String.Replace(V.Local.sTemp,".","",V.Local.sTemp)
+	    F.Intrinsic.String.Right(V.Local.sTemp.Trim,10,V.Local.sFreight)
+	    F.Intrinsic.String.LPad(V.Local.sFreight,"0",10,V.Local.sFreight)
+	    
+	    F.Intrinsic.String.RPad(V.Local.sWebID," ",20,V.Local.sWebOrderID)
+		
+		F.Intrinsic.Control.If(V.Local.sBCountry.UCase,=,"UNITED STATE")
+			V.Local.sBCountry.Set("")
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.Control.If(V.Local.sSCountry.UCase,=,"UNITED STATE")
+			V.Local.sSCountry.Set("")
+		F.Intrinsic.Control.EndIf
+		
+		'Filling in the datatable created from the library. We are adding the order number created on the website to the Order Sort field. ContactName ShipToName changed from SSATTN to sCUSTNAME
+		F.Data.DataTable.AddRow("ORDUPL","Transaction","O","CustomerNo",V.Local.sCustNo,"OrderDate",V.Local.sCreateDate,"ShipToName",V.Local.sCustName.UCase,"ShipToAddress1",V.Local.sSAddr1.UCase,"ShipToAddress2",V.Local.sSAddr2.UCase,"ShipToCity",V.Local.sSCity.UCase,"ShipToState",V.Local.sSState.UCase,"ShipToZip",V.Local.sSZip,"ShipToCountry",V.Local.sSCountry.UCase,"ShipToAttention",V.Local.sSAttn.UCase,"UserField5Head",V.Local.sWebID,"Salesman","WEB","ContactName",V.Local.sContact.UCase,"Freight",V.Local.sFreight,"ShipVia",V.Local.sShipVia)
+
+		F.Data.DataTable.AddRow("ORDUPLExtra","ShipToInternationalFlag",V.Local.sIntlFlag,"ShipToName",V.Local.sCustName.UCase,"ShipToAddress1",V.Local.sSAddr1.UCase,"ShipToAddress2",V.Local.sSAddr2.UCase,"ShipToCity",V.Local.sSCity.UCase,"ShipToState",V.Local.sSState.UCase,"ShipToZip",V.Local.sSZip,"ShipToCountry",V.Local.sSCountry.UCase,"ShipToAttention",V.Local.sSAttn.UCase,"BillToName",V.Local.sBCustName.UCase,"BillToAttention",V.Local.sBAttn.UCase,"BillToAddress1",V.Local.sBillAddr1.UCase,"BillToAddress2",V.Local.sBillAddr2.UCase,"BillToCity",V.Local.sCity.UCase,"BillToState",V.Local.sPCode.UCase,"BillToZip",V.Local.sZip,"BillToCountry",V.Local.sBCountry.UCase,"ContactEmail",V.Local.sBEmail,"ContactPhone",V.Local.sBPhone,"OrderSort",V.Local.sWebOrdNum.Trim,"OrderSort2",V.Local.sFinStatus.UCase.Trim)
+
+		'Adding the lines in a different subroutine.
+		F.Intrinsic.Control.CallSub(AddOrderLines,"Head",V.Local.iHead,"OrderWebID",V.Local.sWebID,"CustomerNo",V.Local.sCustNo,"OrderDate",V.Local.sCreateDate)
+		
+'		'Adding tax line if tax was collected
+'		F.Intrinsic.Control.If(V.Local.sTotTax,<>,"0")
+'			F.Data.DataView.Create("ORDUPLLines","dvLineNumber",22,"","LineNumber Desc")
+'			V.Local.sLine.Set(V.DataView.ORDUPLLines!dvLineNumber(0).LineNumber!FieldValTrim)
+'			F.Data.DataView.Close("ORDUPLLines","dvLineNumber")
+'			F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+'			F.Intrinsic.String.LPad(V.Local.sLine,"0",3,V.Local.sLine)
+'			F.Intrinsic.Math.Mult(V.Local.sTotTax.Float,1000000,V.Local.sTotTax)
+'			F.Data.DataTable.AddRow("ORDUPLLines","LineNumber",V.Local.sLine,"QtyOrdered","10000","PartNumber","900-00007-000","PartRev"," ","PartLoc","  ","QuotedPrice",V.Local.sTotTax,"PartDesc","SALES TAX COLLECTED","UM","EA","LineType","D")
+'		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.UI.ChangeWaitStatus("Creating Global Shop Order")
+		
+		F.Intrinsic.Control.CallSub(ORDUPLCreateFile)
+		
+		F.Intrinsic.Control.CallSub(ORDUPLSync)
+		
+		f.Intrinsic.Control.If(V.ODBC.conts.Exists,=,True)
+			F.ODBC.Connection!conts.Close
+		f.Intrinsic.Control.EndIf
+				
+		F.ODBC.Connection!conts.OpenCompanyConnection
+	
+		F.Intrinsic.String.Build("Select Top 1 ORDER_NO from V_ORDER_HEADER where USER_5= '{0}' order by Date_Order Desc",V.Local.sWebID.Trim,V.Local.sSql)
+		F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSql,V.Local.sOrdNo)
+		F.Intrinsic.Control.If(V.Local.sOrdNo.Trim,<>,"")
+			'check to see if there a discount on the order
+			F.Intrinsic.String.Build("UPDATE ORDER_LINES Set FLAG_ALWAYS_DISCOUNT = 'D' where ORDER_NO= '{0}' and RECORD_TYPE= 'L' AND LINE_TYPE <> 'F'",V.Local.sOrdNo,V.Local.sSql)
+			F.ODBC.Connection!conts.Execute(V.Local.sSql)		
+			F.Intrinsic.String.Build("{0}{1}{2} for {3}, Shopify order {4}",V.Global.sBody,V.Ambient.NewLine,V.Local.sOrdNo,V.Local.sCustName.Trim,V.Local.sWebOrdNum.Trim,V.Global.sBody)
+			F.Intrinsic.Control.If(V.Global.sWarning,<>,"")
+				F.Intrinsic.String.Build("{0}{1}{2}",V.Global.sBody,V.Global.sWarning,V.Ambient.NewLine,V.Global.sBody)
+				V.Global.sWarning.Redim(0,0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.String.Build("{0}{1}",V.Global.sBody,V.Ambient.NewLine,V.Global.sBody)
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Build("{0}{1}____________________________________________________________",V.Global.sBody,V.Ambient.NewLine,V.Global.sBody)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.CallSub(GetORDUPLErrorMessage)
+			F.Intrinsic.String.Build("{0}{1} {2}. The error noted was {3}{4}{3}",V.Global.sError,V.Ambient.NewLine,V.Local.sWebOrdNum.Trim,V.Ambient.DblQuote,V.Args.ORDUPL_ERROR,V.Global.sError)
+			F.ODBC.Connection!conts.Close
+			F.Intrinsic.Control.GoTo("ErrorBypass")
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("UPDATE ORDER_HEADER Set TERMS= 'SHOPIFY' where ORDER_NO= '{0}' and RECORD_NO= '  A'",V.Local.sOrdNo,V.Local.sSql)
+		F.ODBC.Connection!conts.Execute(V.Local.sSql)
+		
+		'adding customer PO to callwrapper - OrderNo_Customer LastName
+		'build customer PO information
+		F.Intrinsic.String.Build("{0}_{1}", V.Local.sWebOrdNum.Trim, V.Local.sCustLName.UCase.Trim, V.Local.sCustPO)
+		F.Intrinsic.String.Build("UPDATE ORDER_HEADER SET CUSTOMER_PO = '{0}' WHERE ORDER_NO = '{1}' AND RECORD_NO= '  A' ", V.Local.sCustPO.Trim, V.Local.sOrdNo.Trim, V.Local.sSql)
+		F.ODBC.Connection!conts.Execute(V.Local.sSql)
+	
+		
+		'adding logic to header text
+		'query order_hf_text to see if a record exists. If it does, update it. If it doesn't, insert it
+		F.Intrinsic.String.Build("SELECT * FROM V_ORDER_HF_TEXT WHERE ORDER_NUMBER = '{0}'", V.Local.sOrdNo.Trim, V.Local.sSql)
+		F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSql, V.Local.sHeaderText)
+		F.Intrinsic.Control.If(V.Local.sHeaderText.Trim, =,"")
+			F.Global.Object.CreateDB("DB", V.Caller.CompanyCode, V.Ambient.DBServerName, v.Local.iCon)
+			F.Global.Object.Create("HeaderText", "Sales.SalesOrderComments","DB", V.Local.iCon)
+
+			F.Global.Object.Add("HeaderText", "SalesOrderNumber", V.Local.sOrdNo.Trim,"isFooter", False, "PrintOnSalesOrderAcknowledgement", True,"PrintOnInvoice", False, "PrintOnBillOfLading", False, "PrintOnPackingList", True,  "PrintonQuote", False,"Information.Comment", V.Local.sShippingText.Trim)
+			F.Global.Object.Insert("HeaderText", V.Local.iRet)
+			Function.Global.Object.Dispose("HeaderText")
+			
+
+			'remove any single/double quotes first just in case - they shouldnt need any
+		'	f.Intrinsic.String.Replace(V.Local.sShippingText,v.ASCII.34,""V.Local.sShippingText)
+		'	f.Intrinsic.String.Replace(V.Local.sShippingText,v.ASCII.39,"",V.Local.sShippingText)
+
+		'	F.Intrinsic.String.Build("UPDATE ORDER_HF_TEXT SET TEXT = '{0}' WHERE ORDER_NUMBER = '{1}' AND TYPE <> 1", V.Local.sShippingText.Trim,v.Local.sOrdNo.Trim, V.Local.sSql)
+		'	F.ODBC.Connection!conts.Execute(V.Local.sSql)
+		F.Intrinsic.Control.EndIf
+		
+		
+		
+		'add logic to loop through order lines and see if there is a discount. If so, set the flag_always_discount to 'Y' and perform the calculations
+		F.Intrinsic.String.Build("SELECT RECORD_NO, PRICE, QTY_ORDERED, DISCOUNT, EXTENSION, AMT_DISCOUNT, DISCOUNT_PRICE, ORDER_DISC_AMT, PRICE_ORDER, PRICE_DISC_ORD, EXTENSION_ORDER, AMT_DISC_ORDER, AMT_DISC_ORD_ORDER FROM V_ORDER_LINES WHERE ORDER_NO = '{0}' AND RECORD_TYPE= 'L' AND LINE_TYPE <> 'F' AND (FLAG_ALWAYS_DISCOUNT = 'D' OR FLAG_ALWAYS_DISCOUNT = 'Y')", V.Local.sOrdNo.Trim, V.Local.sSql)
+		F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSql, V.Local.sOrderLineInfo)
+		F.Intrinsic.Control.If(V.Local.sOrderLineInfo.Trim,<>,"")
+			F.Intrinsic.String.Split(V.Local.sOrderLineInfo, "#$#", V.Local.sOrderLineInfo)
+			F.Intrinsic.Control.For(V.Local.iCnt, V.Local.sOrderLineInfo.LBound, V.Local.sOrderLineInfo.UBound, 1)
+				'split the row into columns
+				F.Intrinsic.String.Split(V.Local.sOrderLineInfo(V.Local.iCnt), "*!*", V.Local.sDiscInfo)
+				V.Local.fDiscount.Set(V.Local.sDiscInfo(3).Float)
+		
+				F.Intrinsic.Control.If(V.Local.fDiscount,>,0)
+					V.Local.fPrice.Set(V.Local.sDiscInfo(1).Float)
+					V.Local.fQtyOrdered.Set(V.Local.sDiscInfo(2).Float)
+					'multiply price by qty ordered to get extension before discount
+					F.Intrinsic.Math.Mult(V.Local.fPrice, V.Local.fQtyOrdered, V.Local.fNoDiscExtension)
+					
+					'multiply the discount amount by the price to get discount_price
+					F.Intrinsic.Math.Mult(V.Local.fDiscount, V.Local.fPrice, V.Local.fDiscPrice)
+					F.Intrinsic.Math.Round(V.Local.fDiscPrice, 2, V.Local.fDiscPrice)
+					
+					'multiply the discount price by the quantity to get the new extension
+					F.Intrinsic.Math.Mult(V.Local.fDiscPrice, V.Local.fQtyOrdered, V.Local.fExtension)
+					F.Intrinsic.Math.Mult(V.Local.fExtension, -1, V.Local.fNegExtension)
+					
+					F.Intrinsic.Math.Sub(V.Local.fNoDiscExtension, V.Local.fExtension, V.Local.fDiscAmt)
+					
+					'build sql update statement
+					F.Intrinsic.String.Build("UPDATE ORDER_LINES SET EXTENSION = '{0}', DISCOUNT_PRICE = '{1}', ORDER_DISC_AMT = '{2}', PRICE_DISC_ORD = '{3}', EXTENSION_ORDER = '{4}',AMT_DISC_ORDER = '{5}',  AMT_DISC_ORD_ORDER = '{6}', FLAG_ALWAYS_DISCOUNT = 'Y' WHERE ORDER_NO= '{7}' AND RECORD_NO = '{8}' and RECORD_TYPE= 'L' ", V.Local.fDiscAmt, v.Local.fDiscPrice, V.Local.fNegExtension, V.Local.fDiscPrice, V.Local.fDiscAmt, V.Local.fNegExtension, V.Local.fNegExtension, V.Local.sOrdNo.Trim, V.Local.sDiscInfo(0).Trim, V.Local.sSql)
+					F.ODBC.Connection!conts.Execute(V.Local.sSql)
+				F.Intrinsic.Control.EndIf
+				
+			F.Intrinsic.Control.Next(V.Local.iCnt)
+		F.Intrinsic.Control.EndIf
+		
+		F.ODBC.Connection!conts.Close
+		
+		F.Intrinsic.String.Build("[OrderWebID]= '{0}'",V.Local.sWebID.Trim,V.Local.sFilter)
+		F.Data.DataView.Create("dtGSOrds","dvOrdFiller",22,V.Local.sFilter,"")
+		F.Data.DataView.SetValue("dtGSOrds","dvOrdFiller",-1,"OrderNO",V.Local.sOrdNo,"CustExtID",V.Local.sWebOrdNum.Trim)
+		F.Data.DataView.Close("dtGSOrds","dvOrdFiller")
+
+		F.Intrinsic.Control.CallSub(ProcessNewEntries)
+		
+		F.Intrinsic.Control.Label("ErrorBypass")
+		
+		F.Intrinsic.Math.Add(V.Local.iHead,1,V.Local.iHead)
+		F.Communication.JSON.ParseFile(V.Local.sFile)
+		F.Intrinsic.String.Build("/json/orders/[{0}]",V.Local.iHead,V.Local.sHeadPath)
+		F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+		
+		F.Intrinsic.UI.Sleep(30)
+		
+		
+#End Region ' CollectNewOrder		
+
+#Region "CollectExistingOrder"
+	F.Intrinsic.Control.Else
+	
+		'Order has already been created.  Now we check for status changes and update as needed.
+		F.Intrinsic.String.Build("[OrderWebID] = '{0}' and ([Last_Fin_Status] = 'FULFILLED' OR [Last_Fin_Status] = 'CANCELLED')",V.Local.sWebID.Trim,V.Local.sFilter)
+		F.Data.DataView.Create("dtGSOrds","dvOrdFulfilled",22,V.Local.sFilter,"")
+		F.Intrinsic.Control.If(V.DataView.dtGSOrds!dvOrdFulfilled.RowCount,=,0)
+			F.Intrinsic.Control.CallSub(UpdateStatus,"iHeader",V.Local.iHead,"sWebID",V.Local.sWebID)
+		F.Intrinsic.Control.EndIf
+		F.Data.DataView.Close("dtGSOrds","dvOrdFulfilled")
+		
+		F.Intrinsic.Math.Add(V.Local.iHead,1,V.Local.iHead)	
+		F.Communication.JSON.ParseFile(V.Local.sFile)
+		F.Intrinsic.String.Build("/json/orders/[{0}]",V.Local.iHead,V.Local.sHeadPath)
+		F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+	F.Intrinsic.Control.EndIf
+#End Region ' CollectExistingOrder
+
+F.Intrinsic.Control.Loop
+
+#End Region ' ColOrdLoop
+
+F.Intrinsic.Control.If(V.Local.iHead,<,51)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sPage.Trim,<>,"")
+	F.Intrinsic.Control.CallSub(CollectOrders,"Page",V.Local.sPage)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.CollectOrders.End
+
+Program.Sub.ProcessNewEntries.Start
+F.Intrinsic.Control.Try
+
+'we are going to save the information into the database
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+'We have to get the order number created by grabbing the latest order with the web id in the customer PO line
+F.Data.DataView.Create("dtGSOrds","dvGSOrds",22,"[NewEntry]= 'True' and OrderNo<>''","")
+F.Data.DataView.ToDataTable("dtGSOrds","dvGSOrds","dtNewOrds")
+
+F.Data.DataView.SetValue("dtGSOrds","dvGSOrds",-1,"NewEntry",False)
+
+F.Data.Datatable.AcceptChanges("dtGSOrds")
+
+F.Data.DataView.Close("dtGSOrds","dvGSOrds")
+
+F.Data.Datatable.RemoveColumn("dtNewOrds","NewEntry")
+
+F.Data.DataTable.SaveToDB("dtNewOrds","conts","GCG_6597_Orders_XRef","LineKey",128)
+
+F.Data.Datatable.Close("dtNewOrds")
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessNewEntries.End
+
+Program.Sub.AddOrderLines.Start
+F.Intrinsic.Control.Try
+V.Local.bIsSku.Declare(String,False)
+V.Local.sLinePath.Declare(String,"")
+V.Local.sLine.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sID.Declare(String,"")
+V.Local.sName.Declare(String,"")
+V.Local.sPartNo.Declare(String,"")
+V.Local.sPrice.Declare(String,"")
+V.Local.sDiscount.Declare(String,"")
+V.Local.sSku.Declare(String,"")
+V.Local.sTtlTax.Declare(String,"")
+V.Local.sTtl.Declare(String,"")
+V.Local.sSubTax.Declare(String,"")
+V.Local.sSubTtl.Declare(String,"")
+V.Local.sQty.Declare(String,"")
+V.Local.sProdID.Declare(String,"")
+V.Local.sTotalPrice.Declare(String,"")
+V.Local.sFormatQty.Declare(String,"")
+V.Local.sFormatPrice.Declare(String,"")
+V.Local.sDblQtRemoval.Declare(String,"")
+V.Local.sPartDesc.Declare(String,"")
+V.Local.iCounter.Declare(Long,1)
+V.Local.bFlag.Declare(Boolean,True)
+V.Local.dOrderDate.Declare(Date,"01/01/1900")
+V.Local.sLineNo.Declare
+V.Local.bFee.Declare
+V.Local.sRet.Declare
+V.Local.sLineDiscPath.Declare
+V.Local.iDiscCounter.Declare
+V.Local.bDiscFlag.Declare
+V.Local.sNoRevPart.Declare
+
+F.Intrinsic.Date.ConvertDString(V.Args.OrderDate,"YYYYMMDD",V.Local.dOrderDate)
+F.Intrinsic.String.Build("{0}~{0}",V.Ambient.DblQuote,V.Local.sDblQtRemoval)
+
+'We are going to navigate the current node of the orders to gather the order lines information. We are expecting passed variable Head,which is the number of the node for the order header,orderdate,customerno and orderno
+F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]",V.Args.Head.Long,V.Local.iCounter,V.Local.sLinePath)
+F.Communication.JSON.HasXPath(V.Local.sLinePath,V.Local.bFlag)
+
+F.Intrinsic.Control.DoUntil(V.Local.bFlag,=,False)
+	'First thing we want to do is make sure that the part that was purchased exists in global shop
+	'website id for the product,which we can use to cross reference for the part no
+	F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/variant_id",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sProdID)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/sku",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSku)
+
+	'Now we use the dictionary to make sure we have a part in GS
+	V.Local.sPartNo.Redim(0,2)
+	
+	F.Intrinsic.String.RPad(V.Dictionary.dicParts![V.Local.sProdID]," ",20,V.Local.sPartNo)
+	F.Intrinsic.String.Left(V.Local.sPartNo,17, V.Local.sNoRevPart)
+'	F.Intrinsic.String.IsInString(V.Local.sSku, V.Local.sNoRevPart, True, V.Local.bIsSku)
+	F.Intrinsic.Control.If(V.Local.sPartNo,<>,"","AND",V.Local.sNoRevPart.Trim,=,V.Local.sSku.Trim)
+	
+		'Order Line Id. Unique identifier.
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/id",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sID)
+		
+		'Name of the product
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/name",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}~{1}~{0}",V.Ambient.DblQuote,V.Local.sTemp,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Local.sDblQtRemoval,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\U0026"," ",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sName)
+		F.Communication.Misc.EncodeToString(3, V.Local.sTemp, V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"%ae","",V.Local.sTemp)
+       		 F.Intrinsic.String.Replace(V.Local.sTemp, "%99", "", V.Local.sTemp)
+       	 F.Intrinsic.String.Replace(V.Local.sTemp, "%a9", "", V.Local.sTemp)
+	 	F.Communication.Misc.DecodeToString(3, V.Local.sTemp, V.Local.sTemp)
+	 	'Determine if line is a fee
+		F.Intrinsic.String.RegExMatch(V.Local.sName,"(?<![A-z])fee(?![A-z])",True,V.Local.sRet)
+		F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sName)
+		F.Intrinsic.String.RPad(V.Local.sName," ",30,V.Local.sName)
+				
+		F.Intrinsic.Control.If(V.Local.sRet.Trim,=,"")
+			V.Local.bFee.Set(False)
+		F.Intrinsic.Control.Else
+			V.Local.bFee.Set(True)
+		F.Intrinsic.Control.EndIf
+		
+		'Quantity
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/quantity",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sQty)
+		
+		'Subtotal
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/price",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSubTtl)
+		
+		'Subtotal Tax
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/tax_lines/[1]/price",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bFlag)
+		F.Intrinsic.Control.If(V.Local.bFlag,=,True)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSubTax)
+		F.Intrinsic.Control.Else
+			V.Local.sSubTax.Set("0.00")
+		F.Intrinsic.Control.EndIf
+				
+		'sku
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/sku",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSku)
+		
+		'price
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/price",V.Args.Head.Long,V.Local.iCounter,V.Local.sTemp)
+		F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+		F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+		F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sPrice)
+		
+		'Discounts
+		V.Local.iDiscCounter.Set(1)
+		'Looping through line discount allocations to find all line item discounts applied
+		F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/discount_allocations/[{2}]",V.Args.Head.Long,V.Local.iCounter,V.Local.iDiscCounter,V.Local.sLineDiscPath)
+		F.Communication.JSON.HasXPath(V.Local.sLineDiscPath,V.Local.bDiscFlag)
+		
+		V.Local.sDiscount.Set("0")
+		
+		F.Intrinsic.Control.DoUntil(V.Local.bDiscFlag,=,False)
+			F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/discount_allocations/[{2}]/amount",V.Args.Head.Long,V.Local.iCounter,V.Local.iDiscCounter,V.Local.sTemp)
+			F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+			F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+			
+			F.Intrinsic.Math.Div(V.Local.sTemp.Float,V.Local.sQty.Float,V.Local.sTemp)
+			
+			F.Intrinsic.Math.Add(V.Local.sTemp.Float,V.Local.sDiscount.Float,V.Local.sDiscount.Float)
+		
+			F.Intrinsic.Math.Add(V.Local.iDiscCounter,1,V.Local.iDiscCounter)
+			F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]/discount_allocations/[{2}]",V.Args.Head.Long,V.Local.iCounter,V.Local.iDiscCounter,V.Local.sLineDiscPath)
+			F.Communication.JSON.HasXPath(V.Local.sLineDiscPath,V.Local.bDiscFlag)
+		F.Intrinsic.Control.Loop
+			
+		F.Intrinsic.String.Left(V.Local.sPartNo(0),17,V.Local.sPartNo(1))
+		F.Intrinsic.String.Right(V.Local.sPartNo(0),3,V.Local.sPartNo(2))
+		
+		F.Intrinsic.String.LPad(V.Local.iCounter,"0",3,V.Local.sLine)
+		
+		F.Intrinsic.Control.If(V.Local.sDiscount.Float,>,0)
+			F.Intrinsic.Math.Div(V.Local.sDiscount.Float,V.Local.sPrice.Float,V.Local.sDiscount.Float)
+			F.Intrinsic.Math.Mult(V.Local.sDiscount.Float,10000,V.Local.sDiscount)
+			F.Intrinsic.String.LPad(V.Local.sDiscount,"0",5,V.Local.sDiscount)
+		F.Intrinsic.Control.EndIf
+		
+		'F.Intrinsic.Math.Sub(V.Local.sPrice.Float,V.Local.sDiscount.Float,V.Local.sPrice)
+		
+		F.Intrinsic.Math.Add(V.Local.sTtl.Float,V.Local.sTtlTax.Float,V.Local.sTotalPrice)
+		F.Intrinsic.Math.Mult(V.Local.sTotalPrice.Float,1000000,V.Local.sFormatPrice)
+		
+		F.Intrinsic.Math.Mult(V.Local.sQty.Float,10000,V.Local.sFormatQty)
+		F.Intrinsic.Math.Mult(V.Local.sPrice.Float,1000000,V.Local.sPrice)
+		
+		F.Intrinsic.Control.If(V.Local.bFee,=,True)
+			F.Data.DataTable.AddRow("ORDUPLLines","LineNumber",V.Local.sLine,"QtyOrdered",V.Local.sFormatQty,"PartNumber",V.Local.sPartNo(1),"PartRev",V.Local.sPartNo(2),"PartLoc","  ","QuotedPrice",V.Local.sPrice,"PartDesc",V.Local.sName,"UM","EA","LineType","D","OrderDiscPercentage",V.Local.sDiscount)
+		F.Intrinsic.Control.Else
+			F.Data.DataTable.AddRow("ORDUPLLines","LineNumber",V.Local.sLine,"QtyOrdered",V.Local.sFormatQty,"PartNumber",V.Local.sPartNo(1),"PartRev",V.Local.sPartNo(2),"PartLoc","  ","QuotedPrice",V.Local.sPrice,"PartDesc",V.Local.sName,"UM","EA","LineType","S","OrderDiscPercentage",V.Local.sDiscount)
+		F.Intrinsic.Control.EndIf
+		
+		F.Data.DataTable.AddRow("dtGSOrds","OrderWebID",V.Args.OrderWebID.Long,"Customer",V.Args.CustomerNo,"OrderLine",V.Local.sLine,"OrdDate",V.Local.dOrderDate,"QtyOrdered",V.Local.sQty,"PartNo",V.Local.sPartNo(1),"Rev",V.Local.sPartNo(2),"Loc","  ","OrderNO","","NewEntry",True,"LineKey","0","Line_Item_ID",V.Local.sID.Trim)
+	
+	F.Intrinsic.Control.Else
+		'If no variant_id exists in Shopify
+		F.Intrinsic.Control.If(V.Local.sProdID.Trim,=,"null")
+			F.Intrinsic.String.LPad(V.Local.iCounter,0,3,V.Local.sLineNo)
+			
+			F.Intrinsic.Control.If(V.Local.sSku.Trim,=,"")
+				F.Intrinsic.String.Build("{0}{1}{4}Warning! Shopify Order {2}, Line {3} could not be added to Global Shop. {1}{4}- The part does not have a variant ID or SKU in Shopify.{1}{4}- Please add this line manually in Global Shop.",V.Global.sWarning,V.Ambient.NewLine,V.DataTable.ORDUPL(0).CustomerPO!FieldValTrim,V.Local.sLineNo,V.Ambient.Tab,V.Global.sWarning)
+			F.Intrinsic.Control.EndIf
+			
+			F.Intrinsic.String.Build("{0}{1}{5}Warning! Shopify Order {2}, Line {3} could not be added to Global Shop. {1}{5}- The SKU {4} does not have a variant ID in Shopify.{1}{5}- Please add this line manually in Global Shop.",V.Global.sWarning,V.Ambient.NewLine,V.DataTable.ORDUPL(0).CustomerPO!FieldValTrim,V.Local.sLineNo,V.Local.sSku.Trim,V.Ambient.Tab,V.Global.sWarning)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.If(V.Local.sSku.Trim,=,"")
+				F.Intrinsic.String.Build("{0}{1}{4}Warning! Shopify Order {2}, Line {3} could not be added to Global Shop. {1}{4}- The part does not have a variant ID or SKU in Shopify.{1}{4}- Please add this line manually in Global Shop.",V.Global.sWarning,V.Ambient.NewLine,V.DataTable.ORDUPL(0).CustomerPO!FieldValTrim,V.Local.sLineNo,V.Ambient.Tab,V.Global.sWarning)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Math.Add(V.Local.iCounter,1,V.Local.iCounter)
+	F.Intrinsic.String.Build("/json/orders/[{0}]/line_items/[{1}]",V.Args.Head.Long,V.Local.iCounter,V.Local.sLinePath)
+	F.Communication.JSON.HasXPath(V.Local.sLinePath,V.Local.bFlag)
+F.Intrinsic.Control.Loop
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.AddOrderLines.End
+
+Program.Sub.CreateCustomer.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+V.Local.sUser.Declare(String,"")
+V.Local.sUserName.Declare(String,"")
+V.Local.sPass.Declare(String,"")
+V.Local.sURL.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sData.Declare(String,"")
+V.Local.sRet.Declare(String,"")
+V.Local.sFile.Declare(String,"")
+V.Local.sName.Declare(String,"")
+V.Local.sFullName.Declare(String,"")
+V.Local.sCreateDate.Declare(String,"")
+V.Local.sNumber.Declare(String,"")
+V.Local.sEmail.Declare(String,"")
+V.Local.sAttn.Declare(String,"")
+V.Local.sCompany.Declare(String,"")
+V.Local.sBillAddr1.Declare(String,"")
+V.Local.sBillAddr2.Declare(String,"")
+V.Local.sCity.Declare(String,"")
+V.Local.sState.Declare(String,"")
+V.Local.sZip.Declare(String,"")
+V.Local.sBCountry.Declare(String,"")
+V.Local.sBEmail.Declare(String,"")
+V.Local.sBPhone.Declare(String,"")
+V.Local.sSPhone.Declare(String,"")
+V.Local.sSAttn.Declare(String,"")
+V.Local.sSCompany.Declare(String,"")
+V.Local.sSAddr1.Declare(String,"")
+V.Local.sSAddr2.Declare(String,"")
+V.Local.sSCity.Declare(String,"")
+V.Local.sSState.Declare(String,"")
+V.Local.sSZip.Declare(String,"")
+V.Local.sSCountry.Declare(String,"")
+V.Local.sCustNo.Declare(String,"")
+V.Local.sCustPerm.Declare(String,"")
+V.Local.sIntFlag.Declare(String,"N")
+V.Local.sFilter.Declare(String,"")
+V.Local.sSource.Declare(String,"")
+V.Local.sMessage.Declare(String,"")
+V.Local.iHead.Declare(Long,0)
+V.Local.iHeadMax.Declare(Long,0)
+V.Local.iWebID.Declare(Long,0)
+V.Local.sHeadPath.Declare(String,"")
+V.Local.bHeadExist.Declare(Boolean,False)
+V.Local.bExist.Declare(Boolean,False)
+V.Local.iCounter.Declare(Long,1)
+V.Local.sCustPhone.Declare(String,"")
+V.Local.sWebCustID.Declare(String,"")
+
+V.Local.iHead.Set(V.Args.Head.Long)
+V.Local.sSource.Set(V.Args.Source.Trim)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/{1}",V.Local.iHead,V.Local.sSource,V.Local.sHeadPath)
+F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/phone",V.Local.iHead,V.Local.sCustPhone)
+
+F.Communication.JSON.SetProperty("XPath",V.Local.sHeadPath)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp.UCase,"\U0026","&",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sName.Set(V.Args.Return)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/company",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp.UCase,"\U0026","&",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sCompany)
+F.Intrinsic.String.RPad(V.Local.sCompany," ",30,V.Local.sCompany)
+	
+'It appears that the company field could have a blank string or a value of "null",depending on how the user created their account from the website. We replace null and check for blank against the company 
+F.Intrinsic.String.Replace(V.Local.sCompany.UCase,"NULL","",V.Local.sCompany)
+F.Intrinsic.Control.If(V.Local.sCompany.Trim,<>,"")
+	V.Local.sName.Set(V.Local.sCompany)
+F.Intrinsic.Control.EndIf
+
+V.Local.sFullName.Set(V.Local.sName)
+
+F.Intrinsic.Control.If(V.Local.sSource,"=","name")
+	F.Intrinsic.String.StripExtraSpaces(V.Local.sName,V.Local.sName)
+	F.Intrinsic.String.Split(V.Local.sName," ",V.Local.sName)
+	V.Local.sName.RedimPreserve(0,3)
+	F.Intrinsic.String.Left(V.Local.sName(0),1,V.Local.sName(2))
+	F.Intrinsic.String.Left(V.Local.sName(1),2,V.Local.sName(3))
+	F.Intrinsic.String.Build("{0}{1}",V.Local.sName(2),V.Local.sName(3),V.Local.sCustPerm)
+	F.Intrinsic.String.StripCharacters(V.Local.sCustPerm,V.Local.sCustPerm)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.StripCharacters(V.Local.sName,V.Local.sName)
+	F.Intrinsic.String.Replace(V.Local.sName," ","",V.Local.sName)
+	F.Intrinsic.String.Left(V.Local.sName,3,V.Local.sCustPerm)
+F.Intrinsic.Control.EndIf
+
+F.Communication.JSON.SetProperty("XPath",V.Local.sCustPhone)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,",","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"(","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,")","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"+","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.StripCharacters(V.Local.sTemp,V.Local.sTemp)
+V.Local.sCustPhone.Set(V.Local.sTemp)
+
+'Shopify customer ID
+F.Intrinsic.String.Build("/json/orders/[{0}]/customer/id",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sWebCustID)
+
+'Email
+F.Intrinsic.String.Build("/json/orders/[{0}]/customer/email",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sEmail)
+F.Intrinsic.String.Left(V.Local.sEmail,43,V.Local.sEmail)
+F.Intrinsic.String.RPad(V.Local.sEmail," ",43,V.Local.sEmail)
+
+V.Local.sBEmail.Set(V.Local.sEmail)
+
+F.Intrinsic.String.Build("Creating account for customer {0}.",V.Local.sFullName,V.Local.sMessage)
+F.Intrinsic.UI.ChangeWaitStatus(V.Local.sMessage)
+
+'Date Created
+F.Intrinsic.String.Build("/json/orders/[{0}]/created_at",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Split(V.Local.sTemp,"T",V.Local.sTemp)
+F.Intrinsic.String.Split(V.Local.sTemp(0),"-",V.Local.sTemp)
+V.Local.sTemp.RedimPreserve(0,2)
+F.Intrinsic.String.Right(V.Local.sTemp(0),2,V.Local.sTemp(0))
+F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sTemp(1),V.Local.sTemp(2),V.Local.sTemp(0),V.Local.sCreateDate)
+
+'Shipping Address--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/first_name",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSAttn)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/last_name",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Build("{0} {1}",V.Local.sSAttn,V.Local.sTemp,V.Local.SsAttn)
+F.Intrinsic.String.Left(V.Local.sSAttn,30,V.Local.sSAttn)
+F.Intrinsic.String.RPad(V.Local.sSAttn," ",30,V.Local.sSAttn)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/company",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sSCompany)
+F.Intrinsic.String.RPad(V.Local.sSCompany," ",30,V.Local.sSCompany)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/address1",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sSAddr1)
+F.Intrinsic.String.RPad(V.Local.sSAddr1," ",30,V.Local.sSAddr1)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/address2",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.Control.If(V.Local.sTemp,=,"null")
+	V.Local.sTemp.Set("")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sSAddr2)
+F.Intrinsic.String.RPad(V.Local.sSAddr2," ",30,V.Local.sSAddr2)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/city",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,15,V.Local.sSCity)
+F.Intrinsic.String.RPad(V.Local.sSCity," ",15,V.Local.sSCity)
+
+'Hoping the state comes in as two characters
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/province_code",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sSState)
+F.Intrinsic.String.RPad(V.Local.sSState," ",2,V.Local.sSState)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/zip",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sSZip)
+F.Intrinsic.String.RPad(V.Local.sSZip," ",13,V.Local.sSZip)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/country",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,12,V.Local.sSCountry)
+F.Intrinsic.String.RPad(V.Local.sSCountry," ",12,V.Local.sSCountry)
+
+F.Intrinsic.Control.If(V.Local.sSCountry.UCase,=,"UNITED STATE")
+	V.Local.sSCountry.Set("")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/phone",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"(","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,")","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,".","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"/","",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"+","",V.Local.sTemp)
+F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sSPhone)
+F.Intrinsic.String.RPad(V.Local.sSPhone," ",13,V.Local.sSPhone)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/shipping_address/country_code",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+V.Local.sTemp.Set(V.Args.Return)
+F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sBCountry)
+F.Intrinsic.String.RPad(V.Local.sBCountry," ",2,V.Local.sBCountry)
+
+F.Intrinsic.Control.If(V.Local.sBCountry.UCase,=,"US")
+	V.Local.sIntFlag.Set("N")
+F.Intrinsic.Control.Else
+	V.Local.sIntFlag.Set("Y")
+F.Intrinsic.Control.EndIf
+
+'Billing info -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.HasXPath(V.Local.sTemp,V.Local.bExist)
+	    
+F.Intrinsic.Control.If(V.Local.bExist,=,True)
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/first_name",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sAttn)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/last_name",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Build("{0} {1}",V.Local.sAttn,V.Local.sTemp,V.Local.sAttn)
+	F.Intrinsic.String.Left(V.Local.sAttn,30,V.Local.sAttn)
+	F.Intrinsic.String.RPad(V.Local.sAttn," ",30,V.Local.sAttn)
+
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/address1",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sBillAddr1)
+	F.Intrinsic.String.RPad(V.Local.sBillAddr1," ",30,V.Local.sBillAddr1)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/address2",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.Control.If(V.Local.sTemp,=,"null")
+		V.Local.sTemp.Set("")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,30,V.Local.sBillAddr2)
+	F.Intrinsic.String.RPad(V.Local.sBillAddr2," ",30,V.Local.sBillAddr2)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/city",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,15,V.Local.sCity)
+	F.Intrinsic.String.RPad(V.Local.sCity," ",15,V.Local.sCity)
+	
+	'Hoping the state comes in as two characters
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/province_code",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sState)
+	F.Intrinsic.String.RPad(V.Local.sState," ",2,V.Local.sState)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/zip",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sZip)
+	F.Intrinsic.String.RPad(V.Local.sZip," ",13,V.Local.sZip)
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/country_code",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,2,V.Local.sBCountry)
+	F.Intrinsic.String.RPad(V.Local.sBCountry," ",2,V.Local.sBCountry)
+	
+	F.Intrinsic.Control.If(V.Local.sBCountry.UCase,=,"US")
+		V.Local.sIntFlag.Set("N")
+	F.Intrinsic.Control.Else
+		V.Local.sIntFlag.Set("Y")
+	F.Intrinsic.Control.EndIf
+		
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/country",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+    F.Intrinsic.Control.CallSub(ENCODING,"Value",V.Local.sTemp)
+	V.Local.sTemp.Set(V.Args.Return)
+	F.Intrinsic.String.Left(V.Local.sTemp,12,V.Local.sBCountry)
+	F.Intrinsic.String.RPad(V.Local.sBCountry," ",12,V.Local.sBCountry)
+	
+	F.Intrinsic.Control.If(V.Local.sBCountry.UCase,"=","UNITED STATE")
+		V.Local.sBCountry.Set("            ")
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("/json/orders/[{0}]/billing_address/phone",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"-","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp," ","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"(","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,")","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,".","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"/","",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"+","",V.Local.sTemp)
+	F.Intrinsic.String.Left(V.Local.sTemp,13,V.Local.sBPhone)
+	F.Intrinsic.String.RPad(V.Local.sBPhone," ",13,V.Local.sBPhone)
+
+F.Intrinsic.Control.Else
+	
+	V.Local.sAttn.Set(V.Local.sSAttn)
+	V.Local.sBillAddr1.Set(V.Local.sSAddr1)
+	V.Local.sBillAddr2.Set(V.Local.sSAddr2)
+	V.Local.sCity.Set(V.Local.sSCity)
+	V.Local.sState.Set(V.Local.sSState)
+	V.Local.sZip.Set(V.Local.sSZip)
+	V.Local.sBCountry.Set(V.Local.sSCountry)
+	V.Local.sBPhone.Set(V.Local.sSPhone)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sSPhone.Trim,=,"")
+	V.Local.sSPhone.Set(V.Local.sBPhone)
+F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.Build("{0}{1}",V.Local.sSPhone.Trim,V.Local.sZip.Trim,V.Local.sCustNo)
+'F.Intrinsic.String.Right(V.Local.sCustNo,3,V.Local.sCustNo)
+'F.Intrinsic.String.Build("{0}{1}",V.Local.sCustPerm.Trim,V.Local.sCustNo.Trim,V.Local.sCustNo)
+
+V.Local.sCustNo.Set("GTOL")
+
+F.Data.DataTable.AddRow("dtCusts","CUSTOMER",V.Local.sCustNo.UCase,"NAME_CUSTOMER",V.Local.sFullName.UCase,"EMAIL",V.Local.sEmail.Trim)
+
+'Filling in the datatable created from the library PhoneNum ShipPhone Attention ShipAttention Term
+F.Data.DataTable.AddRow("6013","CustName",V.Local.sFullName.UCase,"CustNum",V.Local.sCustNo.UCase,"Address1",V.Local.sBillAddr1.UCase,"Address2",V.Local.sBillAddr2.UCase,"CITY",V.Local.sCity.UCase,"STATE",V.Local.sState.UCase,"ZIP",V.Local.sZip.UCase,"COUNTRY",V.Local.sBCountry.UCase,"Attention",V.Local.sAttn.UCase,"IntlAddressFlag",V.Local.sIntFlag,"PhoneNum",V.Local.sBPhone,"TaxState",V.Local.sState.UCase,"Email",V.Local.sEmail,"ShipName",V.Local.sFullName.UCase,"ShipAddress1",V.Local.sBillAddr1.UCase,"ShipAddress2",V.Local.sBillAddr2.UCase,"ShipCity",V.Local.sCity.UCase,"ShipState",V.Local.sState.UCase,"ShipZip",V.Local.sZip.UCase,"ShipCountry",V.Local.sBCountry.UCase,"salesrep","WEB","ShipPhone",V.Local.sBPhone,"ShipAttention",V.Local.sAttn.UCase,"TermsCode","s","ExternalID",V.Local.sWebCustID.Trim,"AlwaysTakesTermsDiscFlag","Y")
+
+F.Intrinsic.Control.CallSub(6013Async)
+
+F.Data.DataTable.DeleteRow("6013")
+
+F.Intrinsic.Variable.AddRV("CustomerNumber",V.Local.sCustNo.UCase)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.CreateCustomer.End
+
+Program.Sub.Encoding.Start
+F.Intrinsic.Control.Try
+V.Local.bExists.Declare(Boolean, False)
+V.Local.sEncoding.Declare(String, "")
+V.Local.sDescription.Declare(String, "")
+V.Local.sStripped.Declare(String, "")
+'This subroutine is used to correct input data to remove some special characters that break the ORDUPL flat file..
+F.Intrinsic.Variable.ArgExists("Value", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists, =, True)
+	V.Local.sEncoding.Set(V.Args.Value)
+	f.Intrinsic.Control.If(V.Local.sEncoding.Trim,<>,"")
+		F.Intrinsic.String.StripCharacters(V.Local.sEncoding, V.Local.sStripped)
+		F.Communication.Misc.EncodeToString(3, V.Local.sEncoding, V.Local.sEncoding)
+		'At the time of creation, GAB is unable to read/identify left and right double quotes, and the customer is using them, so to get around these, we encode to URL, and replace the values with those of regular double quotes, and then decode back to a regular string.
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%93", "%22", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%94", "%22", V.Local.sEncoding)
+		'Special iterations of A
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%80", "A", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%81", "A", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%82", "A", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%83", "A", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%84", "A", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%85", "A", V.Local.sEncoding)
+		'Special iterations of C
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%87", "C", V.Local.sEncoding)
+		'Special iterations of E
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%88", "E", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%89", "E", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8a", "E", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8b", "E", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c9", "E", V.Local.sEncoding)
+		'Special iterations of I
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8c", "I", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8d", "I", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8e", "I", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%8f", "I", V.Local.sEncoding)
+		'Special iterations of O
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%92", "O", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%93", "O", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%94", "O", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%95", "O", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%96", "O", V.Local.sEncoding)
+		'Special iterations of U
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%99", "U", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%9a", "U", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%9b", "U", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%9c", "U", V.Local.sEncoding)
+		'Special iteration of Y
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%9d", "Y", V.Local.sEncoding)
+		'special iterations of a
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a0", "a", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a1", "a", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a2", "a", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a3", "a", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a4", "a", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a5", "a", V.Local.sEncoding)
+		'Special iterations of c
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a7", "c", V.Local.sEncoding)
+		'Special iterations of e
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a8", "e", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%a9", "e", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%aa", "e", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%ab", "e", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%e9", "e", V.Local.sEncoding)
+		'Special iterations of i
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%ac", "i", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%ad", "i", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%ae", "i", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%af", "i", V.Local.sEncoding)
+		'Special iteration of n
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b1", "n", V.Local.sEncoding)
+		'Special iteration of o
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b2", "o", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b3", "o", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b4", "o", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b5", "o", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b6", "o", V.Local.sEncoding)
+		'Special iteration of u
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%b9", "u", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%ba", "u", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%bb", "u", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%bc", "u", V.Local.sEncoding)
+		'Special iteration of y
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%bd", "y", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c3%bf", "y", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%c2%ba", "", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%0a", V.Ambient.NewLine, V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%a0", "", V.Local.sEncoding)
+		F.Intrinsic.String.Replace(V.Local.sEncoding, "%0d", "", V.Local.sEncoding)
+		F.Communication.Misc.DecodeToString(3, V.Local.sEncoding, V.Local.sDescription)
+	F.Intrinsic.Control.Else
+		V.Local.sDescription.Set("")
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Else
+	V.Local.sDescription.Set("")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Variable.AddRV("Return", V.Local.sDescription)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Encoding.End
+
+Program.Sub.UpdateStatus.Start
+F.Intrinsic.Control.Try
+V.Local.iHead.Declare
+V.Local.sTemp.Declare
+V.Local.sFinStatus.Declare
+V.Local.sSQL.Declare
+V.Local.sWebID.Declare
+V.Local.sShopOrd.Declare
+V.Local.sSerialNumber.Declare
+V.Local.sFulStatus.Declare
+V.Local.bRet.Declare
+
+V.Local.iHead.Set(V.Args.iHeader)
+V.Local.sWebID.Set(V.Args.sWebID)
+
+f.Intrinsic.Control.If(V.ODBC.conts.Exists,=,True)
+	F.ODBC.Connection!conts.Close
+f.Intrinsic.Control.EndIf
+#Region "FulFilledOrders"
+'Check if order was fulfilled through Shopify
+F.Intrinsic.String.Build("/json/orders/[{0}]/fulfillment_status",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sFulStatus)
+
+F.Intrinsic.String.Build("/json/orders/[{0}]/tags",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sSerialNumber)
+
+F.Intrinsic.Control.If(V.DataTable.dtSerial.Exists)
+	F.Data.Datatable.Close("dtSerial")
+F.Intrinsic.Control.EndIf
+
+F.Data.Dictionary.Exists("dictSerial",V.Local.bRet)
+
+F.Intrinsic.Control.If(V.Local.bRet,=,True)
+	F.Data.Dictionary.Close("dictSerial")
+F.Intrinsic.Control.EndIf
+
+F.Data.Datatable.CreateFromString("dtSerial",V.Local.sSerialNumber,"PART*!*SERIAL","String*!*String","SN",", ",True)
+'F.Data.Dictionary.CreateFromDatatable("dictSerial","dtSerial","PART","SERIAL")
+'F.Data.Dictionary.SetDefaultReturn("dictSerial","")
+
+'F.Data.Datatable.Close("dtSerial")
+
+F.Intrinsic.Control.If(V.Local.sFulStatus.Trim,=,"fulfilled")
+	F.Intrinsic.String.Build("update GCG_6597_ORDERS_XREF set LAST_FIN_STATUS = 'FULFILLED' where OrderWebID = '{0}'",V.Local.sWebID,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+'	F.Intrinsic.Control.CallSub(OrderFulfilled,"sWebID",V.Local.sWebID.Trim)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+#End Region 'FulFilledOrders
+
+#Region "CancelledOrders"
+'Check if order was cancelled
+F.Intrinsic.String.Build("/json/orders/[{0}]/cancelled_at",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTemp)
+
+'If order was cancelled then we update the cross-reference table and delete the order and lines.
+F.Intrinsic.Control.If(V.Local.sTemp.Trim,<>,"null")
+	F.Intrinsic.String.Build("OrderWebID = '{0}'",V.Local.sWebID,V.Local.sSQL)
+	F.Data.DataView.Create("dtGSOrds","dvDelOrd",22,V.Local.sSQL,"")
+	F.ODBC.Connection!conts.OpenCompanyConnection
+	F.Intrinsic.String.Build("update GCG_6597_ORDERS_XREF set LAST_FIN_STATUS = 'CANCELLED' where OrderWebID = '{0}'",V.Local.sWebID,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+	F.Intrinsic.String.Build("delete ORDER_HEADER where ORDER_NO = '{0}'",V.DataView.dtGSOrds!dvDelOrd(0).OrderNo!FieldValTrim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+	F.ODBC.Connection!conts.Close
+	'Add to email body
+	V.Local.sShopOrd.Set(V.DataView.dtGSOrds!dvDelOrd(0).CustExtID!FieldValTrim)
+	'F.Intrinsic.String.Split(V.Local.sShopOrd,"-",V.Local.sShopOrd)
+	F.Intrinsic.String.Build("{0}{1}{2}, Shopify order #ST{3} ",V.Global.sCANX,V.Ambient.NewLine,V.DataView.dtGSOrds!dvDelOrd(0).OrderNo!FieldValTrim,V.Local.sShopOrd,V.Global.sCanx)
+	F.Data.DataView.Close("dtGSOrds","dvDelOrd")
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+#End Region ' CancelledOrders
+
+#Region "FinancialStatusUpdate"
+F.Intrinsic.String.Build("/json/orders/[{0}]/financial_status",V.Local.iHead,V.Local.sTemp)
+F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sFinStatus)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("select distinct Last_Fin_Status from GCG_6597_ORDERS_XREF where RTRIM(OrderWebId)='{0}'",V.Local.sWebID.Trim,V.Local.sSQL)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+
+F.Intrinsic.Control.If(V.Local.sFinStatus.UCase.Trim,<>,V.Local.sSQL.Trim)
+	F.Intrinsic.String.Build("UPDATE GCG_6597_ORDERS_XREF set Last_Fin_Status='{0}' where RTRIM(OrderWebID)='{1}'",V.Local.sFinStatus.UCase.Trim,V.Local.sWebID.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+	F.Intrinsic.String.Build("UPDATE ORDER_HEADER Set ORDER_SORT_2='{0}' where RTRIM(USER_5)='{1}' and RECORD_NO='  A'",V.Local.sFinStatus.UCase.Trim,V.Local.sWebID.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+#End Region ' FinancialStatusUpdate
+
+F.ODBC.Connection!conts.Close
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.UpdateStatus.End
+
+Program.Sub.OrderFulfilled.Start
+F.Intrinsic.Control.Try
+'This sub is to update the GS order if fulfilled through Shopify
+V.Local.bExists.Declare
+V.Local.sTemp.Declare
+V.Local.sSQL.Declare
+V.Local.sUser.Declare
+V.Local.sPass.Declare
+V.Local.sVersion.Declare
+V.Local.sURL.Declare
+V.Local.sFile.Declare
+V.Local.iHead.Declare(Long, 1)
+V.Local.bHeadExist.Declare(Boolean, True)
+V.Local.sHeadPath.Declare
+V.Local.sPackNo.Declare
+V.Local.iRet.Declare
+V.Local.sRet.Declare
+V.Local.sTransID.Declare
+V.Local.sLineStatus.Declare
+V.Local.sTracking.Declare
+V.Local.sFulID.Declare
+V.Local.sData.Declare
+V.Local.sSetPage.Declare
+V.Local.sPage.Declare
+V.Local.sReqShip.Declare
+V.Local.iSeq.Declare(Long,-1)
+V.Local.sSeq.Declare
+V.Local.iCnt.Declare
+V.Local.iCnt2.Declare
+V.Local.iQtyCnt.Declare
+V.Local.iQty.Declare
+V.Local.sFilter.Declare
+V.Local.sPart.Declare
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS,SINCE_DATE,RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+V.Local.sVersion.Set(V.Local.sSQL(3).Trim)
+V.Local.sSQL.Redim(0,0)
+F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+F.Intrinsic.Control.If(V.Args.Page.Exists)
+	V.Local.sURL.Set(V.Args.Page)
+F.Intrinsic.Control.Else
+	'F.Intrinsic.String.Build("https://benchmarkmedia.myshopify.com/admin/api/{0}/orders.json?ids={1}&status=any",V.Local.sVersion,V.Args.sWebID,V.Local.sTemp)
+	F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/orders.json?ids={1}&status=any",V.Local.sVersion,V.Args.sWebID,V.Local.sTemp)
+	
+	V.Local.sURL.Set(V.Local.sTemp)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}\{1}FUL_ORDS.json",V.Caller.TempDir,V.Caller.CompanyCode,V.Local.sFile)
+
+F.Communication.REST.SetProperty("HTTPMethod","GET")
+F.Communication.REST.SetProperty("User",V.Local.sUser)
+F.Communication.REST.SetProperty("Password",V.Local.sPass)
+F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+F.Communication.REST.SetProperty("Accept","application/json")
+F.Communication.REST.SetProperty("LocalFile",V.Local.sFile)
+F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+F.Communication.REST.Get(V.Local.sURL)
+
+F.Communication.REST.DoEvents()
+F.Communication.REST.ReadProperty("TransferredData",V.Local.sData)
+
+F.Communication.JSON.ParseFile(V.Local.sFile)
+F.Intrinsic.String.Build("/json/orders/[{0}]",V.Local.iHead,V.Local.sHeadPath)
+F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+
+F.Communication.REST.ReadProperty("PARSEDHEADERS",V.Local.sSetPage)
+F.Intrinsic.String.DoubleDelimitedSeek(V.Local.sSetPage,"!*!","*!*","Link",0,"",V.Local.sSetPage)
+F.Intrinsic.String.Split(V.Local.sSetPage,",",V.Local.sSetPage)
+F.Intrinsic.Control.If(V.Local.sSetPage.UBound,=,1)
+	F.Intrinsic.Variable.RemoveArrayElementByOrdinal(V.Local.sSetPage,0,V.Local.sSetPage)
+	V.Local.sSetPage.RedimPreserve(0,0)
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+	V.Local.sSetPage.Redim(0,0)
+	F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+	F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Split(V.Local.sSetPage,";",V.Local.sSetPage)
+	F.Intrinsic.Control.If(V.Local.sSetPage(1).Trim,=,"rel="previous"")
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+	F.Intrinsic.Control.Else
+		V.Local.sPage.Set(V.Local.sSetPage(0).Trim)
+		V.Local.sSetPage.Redim(0,0)
+		F.Intrinsic.String.Replace(V.Local.sPage,"<","",V.Local.sPage)
+		F.Intrinsic.String.Replace(V.Local.sPage,">","",V.Local.sPage)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.Control.If(V.DataTable.dtS10.Exists,=,True)
+'	F.Data.DataTable.DeleteRow("dtS10")
+'	F.Data.DataTable.Close("dtS10")
+'F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.Build("select RTRIM(OrderNo) as ORDER_NO, RTRIM(OrderLine)+'0' as LINE,QtyOrdered as TOTAL_QTY,RTRIM(PartNo) as PART from GCG_6597_ORDERS_XREF where ORDERWEBID = '{0}' and Left(PARTNO,3) <> '900'",V.Args.sWebID,V.Local.sSQL)
+
+'F.Data.DataTable.CreateFromSql("dtS10","conts",V.Local.sSQL,True)
+'F.Data.DataTable.AddColumn("dtS10","TRANS_ID",String,"")
+'F.Data.DataTable.AddColumn("dtS10","SEQ",String)
+'F.Data.DataTable.AddColumn("dtS10","TRANS",String,"S10")
+'F.Data.DataTable.AddColumn("dtS10","PackNo",String,"")
+'F.Data.DataTable.AddColumn("dtS10","LabelPrint",String,"N")
+'F.Data.DataTable.AddColumn("dtS10","LabelQty",String,"0")
+'F.Data.DataTable.AddColumn("dtS10","Error_ID",Long,0)
+'F.Data.DataTable.AddColumn("dtS10","SerialNo",String,"")
+'F.Data.DataTable.AddColumn("dtS10","TrackingNo",String,"")
+'F.Data.DataTable.AddColumn("dtS10","Bin",String,"SHIP")
+
+F.Data.Dictionary.Exists("dictTrack", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,True)
+	F.Data.Dictionary.Close("dictTrack")
+F.Intrinsic.Control.EndIf
+F.Data.Dictionary.Create("dictTrack")
+
+F.Intrinsic.Control.DoUntil(V.Local.bHeadExist,=,False)
+	F.Intrinsic.String.Build("/json/orders/[1]/line_items/[{0}]/fulfillment_status",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sLineStatus)
+	
+	F.Intrinsic.Control.If(V.Local.sLineStatus.Trim,=,"null")
+		F.Intrinsic.Control.GoTo("Bypass")
+	F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.String.Build("/json/orders/[1]/line_items/[{0}]/requires_shipping",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sReqShip)
+	
+	F.Intrinsic.Control.If(V.Local.sReqShip.Trim,=,"false")
+		F.Intrinsic.Control.GoTo("Bypass")
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("/json/orders/[1]/line_items/[{0}]/id",V.Local.iHead,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sFulID)
+
+	F.Intrinsic.String.Build("/json/orders/[1]/fulfillments/[1]/tracking_number",,V.Local.sTemp)
+	F.Communication.JSON.SetProperty("XPath",V.Local.sTemp)
+	F.Communication.JSON.ReadProperty("XText",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,V.Ambient.DblQuote,"",V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\n",V.Ambient.NewLine,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp,"\","",V.Local.sTracking)
+	
+	F.Intrinsic.String.Build("select RTRIM(Last_Fin_Status) as Last_Fin_Status,PARTNO from GCG_6597_ORDERS_XREF where Line_Item_ID = '{0}'",V.Local.sFulID,V.Local.sSQL)
+	F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+	F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+
+	F.Intrinsic.Control.If(V.Local.sSQL(0).Trim,=,"FULFILLED")
+		F.Data.Dictionary.Close("dictTrack")
+		F.ODBC.Connection!conts.Close
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.Else
+		F.Data.Dictionary.AddItem("dictTrack",V.Local.sSQL(1).Trim,V.Local.sTracking)
+		F.Data.Dictionary.SetDefaultReturn("dictTrack","")
+	F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.Control.Label("Bypass")
+	F.Intrinsic.Math.Add(V.Local.iHead,1,V.Local.iHead)	
+	F.Intrinsic.String.Build("/json/orders/[1]/line_items/[{0}]/id",V.Local.iHead,V.Local.sHeadPath)
+	F.Communication.JSON.HasXPath(V.Local.sHeadPath,V.Local.bHeadExist)
+F.Intrinsic.Control.Loop
+
+'F.Data.Dictionary.CreateFromSQL("dictSerialize","conts","select RTRIM(PART) as PART,RTRIM(FLAG_SERIALIZE) as FLAG_SERIALIZE from V_INVENTORY_MSTR")
+'F.Data.Dictionary.SetDefaultReturn("dictSerialize","")
+
+'F.Data.Datatable.AddColumn("dtS10","FLAG_SERIALIZE","String")
+'F.Data.Datatable.FillFromDictionary("dtS10","dictSerialize","PART","FLAG_SERIALIZE")
+'F.Data.Dictionary.Close("dictSerialize")
+
+'F.Intrinsic.Control.If(V.DataTable.dtS10.RowCount,<>,0)
+'	F.Data.DataView.Create("dtS10","dvS10",42)
+'	
+'	F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataView.dtS10!dvS10.RowCount--,1)
+'		F.Intrinsic.Control.If(V.DataTable.dtS10(V.Local.iCnt).TOTAL_QTY!FieldValLong,>,1,"AND",V.DataTable.dtS10(V.Local.iCnt).FLAG_SERIALIZE!FieldValTrim,=,"Y")
+'			V.Local.iQty.Set(V.DataTable.dtS10(V.Local.iCnt).TOTAL_QTY!FieldValLong)
+'			F.Intrinsic.Math.Sub(V.Local.iQty,1,V.Local.iQty)
+'			F.Intrinsic.Control.For(V.Local.iQtyCnt,1,V.Local.iQty,1)
+'				F.Data.Datatable.AddRow("dtS10","ORDER_NO",V.DataTable.dtS10(V.Local.iCnt).ORDER_NO.FieldValTrim,"LINE",V.DataTable.dtS10(V.Local.iCnt).LINE.FieldValTrim,"TOTAL_QTY","1.0000","PART",V.DataTable.dtS10(V.Local.iCnt).PART.FieldValTrim,"TRANS_ID",V.DataTable.dtS10(V.Local.iCnt).TRANS_ID.FieldValTrim,"SEQ","","TRANS",V.DataTable.dtS10(V.Local.iCnt).TRANS.FieldValTrim,"PackNo",V.DataTable.dtS10(V.Local.iCnt).PackNo.FieldValTrim,"LabelPrint","N","LabelQty",0,"Error_ID",0,"SerialNo","","TrackingNo","","Bin","SHIP")
+'			F.Intrinsic.Control.Next(V.Local.iQtyCnt)
+'			V.Local.iQtyCnt.Set(0)
+'		F.Intrinsic.Control.EndIf
+'	F.Intrinsic.Control.Next(V.Local.iCnt)
+
+'	F.Data.DataView.Close("dtS10","dvS10")
+
+'	'Get next packing slip number
+'	F.Global.General.ReadOption("401060",3,1,V.Local.iRet)
+'	F.Intrinsic.Math.Add(V.Local.iRet,1,V.local.iRet)
+'	F.Intrinsic.String.Format(V.Local.iRet,"0000000",V.Local.sPackNo)
+'	F.Global.General.SaveOption("401060","0000","", "", "", "", "","",V.Local.iRet)
+'	
+'	F.Data.Datatable.SetValue("dtS10",-1,"PackNo",V.Local.sPackNo)
+'	
+'	V.Local.iCnt.Set(0)
+
+'	F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtS10.RowCount--,1)
+'		F.Intrinsic.String.Build("PART = '{0}'",V.DataTable.dtS10(V.Local.iCnt).PART!FieldValTrim,V.Local.sFilter)
+'		
+'		F.Data.DataView.Create("dtSerial","dvSerialFilter",22,V.Local.sFilter,"")
+'		
+'		F.Intrinsic.Control.If(V.DataView.dtSerial!dvSerialFilter.RowCount,<>,0)
+'			F.Data.DataView.Create("dtS10","dvS10Filter",22,V.Local.sFilter,"")
+'				F.Intrinsic.Control.If(V.DataView.dtSerial!dvSerialFilter.RowCount,=,V.DataView.dtS10!dvS10Filter.RowCount)
+'					F.Intrinsic.Control.For(V.Local.iCnt2,0,V.DataView.dtS10!dvS10Filter.RowCount--,1)
+'						F.Intrinsic.Control.If(V.DataView.dtS10!dvS10Filter(V.Local.iCnt2).SerialNo!FieldValTrim,=,"")
+'							F.Data.DataView.SetValue("dtS10","dvS10Filter",V.Local.iCnt2,"SerialNo",V.DataView.dtSerial!dvSerialFilter(V.Local.iCnt2).SERIAL.FieldValTrim)
+'						F.Intrinsic.Control.EndIf
+'					F.Intrinsic.Control.Next(V.Local.iCnt2)
+'				F.Intrinsic.Control.Else
+'					F.Intrinsic.String.Build("{0}{1} {2}-{3}. There was a problem with the serial numbers collected from Shopify.",V.Global.sFulFail,V.Ambient.NewLine,V.DataTable.dtS10(V.Local.iCnt).ORDER_NO!FieldValTrim,V.DataTable.dtS10(V.Local.iCnt).LINE!FieldValTrim,V.Global.sFulFail)
+'					V.Global.bFail.Set(True)
+'					'F.ODBC.Connection!conts.Close
+'					'F.Intrinsic.Control.ExitSub
+'				F.Intrinsic.Control.EndIf
+'		F.Intrinsic.Control.EndIf
+'		
+'		F.Intrinsic.Control.If(V.DataView.dtSerial!dvSerialFilter.Exists)
+'			F.Data.DataView.Close("dtSerial","dvSerialFilter")
+'		F.Intrinsic.Control.EndIf
+'		
+'		F.Intrinsic.Control.If(V.DataView.dtS10!dvS10Filter.Exists)
+'			F.Data.DataView.Close("dtS10","dvS10Filter")
+'		F.Intrinsic.Control.EndIf
+'	F.Intrinsic.Control.Next(V.Local.iCnt)
+'	
+'	F.Data.Datatable.RemoveColumn("dtS10","FLAG_SERIALIZE")
+'	
+'	'Get next transaction ID
+'	V.Local.sSQL.Set("select max(TRANS_ID) as TRANS from WIRELESS_HDR")
+'	F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sTransID)
+'	F.Intrinsic.Math.Add(V.Local.sTransID,1,V.Local.sTransID)
+'	F.Intrinsic.String.Format(V.Local.sTransID,"000000000",V.Local.sTransID)
+'	F.Data.Datatable.SetValue("dtS10",-1,"TRANS_ID",V.Local.sTransID)
+'	
+'	V.Local.iCnt.Set(0)
+'	
+'	F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtS10.RowCount--,1)
+'		F.Intrinsic.Math.Add(V.Local.iSeq,1,V.Local.iSeq)
+'		F.Intrinsic.String.Format(V.Local.iSeq,"0000",V.Local.sSeq)
+'		F.Data.Datatable.SetValue("dtS10",V.Local.iCnt,"SEQ",V.Local.sSeq)
+'	F.Intrinsic.Control.Next(V.Local.iCnt)
+'	
+'	F.Data.Datatable.FillFromDictionary("dtS10","dictTrack","PART","TrackingNo")
+'	F.Data.Dictionary.Close("dictTrack")
+
+''Stage shipment(S10)
+'	F.Intrinsic.Control.CallSub(transs10)
+'F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.iHead,<,51)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.CallSub(OrderFulfilled,"Page",V.Local.sPage)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.OrderFulfilled.End
+
+Program.Sub.transS10.Start
+F.Intrinsic.Control.Try
+'Using the wireless system to ship the sales orders (S10 to stage and S40 to complete)
+'V.Local.bOnFirst.Declare
+'V.Local.bSuccess.Declare
+'V.Local.iCount.Declare
+'V.Local.iCnt.Declare
+'V.Local.iFor.Declare
+'V.Local.iSeq.Declare
+'V.Local.sPackNo.Declare
+'V.Local.sOrders.Declare
+'V.Local.sSeq.Declare
+'V.Local.sSQL.Declare
+'V.Local.sTransID.Declare
+'V.Local.sFulID.Declare
+'V.Local.sS10Row.Declare
+'V.Local.sTracking.Declare
+
+'V.Local.bOnFirst.Set(False)
+
+'F.Data.Datatable.AcceptChanges("dtS10")
+
+''Save the transactions to WIRELESS_LINE
+'F.Data.DataTable.SaveToDB("dtS10","conts","WIRELESS_LINE","TRANS_ID*!*SEQ",128,"TRANS_ID@!@TRANS_ID*!*SEQ@!@SEQ*!*TRANS@!@TRANS_TYPE*!*PackNo@!@FIELD_1*!*ORDER_NO@!@FIELD_2*!*LINE@!@FIELD_3*!*PART@!@FIELD_4*!*Bin@!@FIELD_7*!*SerialNo@!@Field_9*!*TOTAL_QTY@!@FIELD_14*!*TrackingNo@!@FIELD_17*!*LABELPRINT@!@FIELD_24*!*LABELQTY@!@FIELD_25*!*ERROR_ID@!@ERROR_ID")
+
+'V.Local.sTransID.Set(V.DataTable.dtS10(0).TRANS_ID!FieldValTrim)
+''Save the transaction to WIRELESS_HDR
+'F.ODBC.Connection!conts.OpenRecordsetRW("rstNew","SELECT * from WIRELESS_HDR")
+'F.ODBC.conts!rstNew.AddNew
+'F.ODBC.conts!rstNew.Set!TRANS_ID(V.Local.sTransID)
+'F.ODBC.conts!rstNew.Set!TRANS_TYPE("S10")
+'F.ODBC.conts!rstNew.Set!ATTEMPTED_DATE("00000000")
+'F.ODBC.conts!rstNew.Set!ATTEMPTED_TIME("00000000")
+'F.ODBC.conts!rstNew.Set!LABEL_PRINTER("UPID:1")
+'F.ODBC.conts!rstNew.Set!USER_ID(V.Caller.User)
+'F.ODBC.conts!rstNew.Set!BATCH(0)
+'F.ODBC.conts!rstNew.Update
+'F.ODBC.conts!rstNew.Close
+
+''Loop to see if the transaction was successful
+'V.Local.bSuccess.Set(False)
+'V.Local.iCount.Set(0)
+'F.Intrinsic.String.Build("select * from WIRELESS_HDR where TRANS_ID = '{0}'",V.Local.sTransID,V.Local.sSQL)
+
+'F.Intrinsic.Control.DoUntil(V.Local.bSuccess,=,True)
+'	F.Intrinsic.UI.ChangeWaitStatus("Waiting for S10 Transaction Success",V.Local.iCnt,0,3000)
+'	F.ODBC.Connection!conts.OpenLocalRecordsetRO("rstCheckS10",V.Local.sSQL)
+'	F.Intrinsic.Control.If(V.ODBC.conts!rstCheckS10.EOF,=,False)
+'		F.Intrinsic.Control.If(V.ODBC.conts!rstCheckS10.FieldValTrim!SUCCESSFUL_FLAG,=,"Y")
+'			V.Local.bSuccess.Set(True)
+'			F.Intrinsic.Control.CallSub(transS40,"PackNo",V.DataTable.dtS10(0).PackNo!FieldValTrim,"TransID",V.Local.sTransID)
+'			F.Intrinsic.String.Build("Update GCG_6597_ORDERS_XREF set LAST_FIN_STATUS = 'FULFILLED' where ORDERNO = '{0}'",V.DataTable.dtS10(0).ORDER_NO!FieldValTrim,V.Local.sSQL)
+'			F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+'		F.Intrinsic.Control.ElseIf(V.ODBC.conts!rstCheckS10.FieldValTrim!SUCCESSFUL_FLAG,=,"N")
+'			F.Intrinsic.String.Build("{0}{1} {2}-{3}. S10 transaction failed.",V.Global.sFulFail,V.Ambient.NewLine,V.DataTable.dtS10(0).ORDER_NO!FieldValTrim,V.DataTable.dtS10(0).LINE!FieldValTrim,V.Global.sFulFail)
+'			V.Local.bSuccess.Set(True)
+'			V.Global.bFail.Set(True)
+'		F.Intrinsic.Control.EndIf
+'	F.Intrinsic.Control.EndIf
+'	
+'	F.Intrinsic.Control.If(V.Local.iCnt.++,=,3000)
+'		F.Intrinsic.String.Build("{0}{1} {2}-{3}. S10 transaction failed.",V.Global.sFulFail,V.Ambient.NewLine,V.DataTable.dtS10(0).ORDER_NO!FieldValTrim,V.DataTable.dtS10(0).LINE!FieldValTrim,V.Global.sFulFail)
+'		V.Local.bSuccess.Set(True)
+'		V.Global.bFail.Set(True)		
+'	F.Intrinsic.Control.EndIf
+'F.ODBC.conts!rstCheckS10.Close
+'F.Intrinsic.Control.Loop
+
+'F.Data.DataTable.Close("dtS10")
+'F.ODBC.Connection!conts.Close
+'F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.transS10.End
+
+Program.Sub.transS40.Start
+F.Intrinsic.Control.Try
+V.Local.bSuccess.Declare
+V.Local.bWait.Declare
+V.Local.iCount.Declare
+V.Local.sPackNo.Declare
+V.Local.sTransID.Declare
+V.Local.sSQL.Declare
+
+V.Local.sPackNo.Set(V.Args.PackNo)
+V.Local.sSQL.Set("select max(TRANS_ID) as TRANS from WIRELESS_HDR")
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sTransID)
+F.Intrinsic.Math.Add(V.Local.sTransID,1,V.Local.sTransID)
+F.Intrinsic.String.Format(V.Local.sTransID,"000000000",V.Local.sTransID)
+
+'Write the S40 transaction to WIRELESS_LINE
+F.ODBC.Connection!conts.OpenLocalRecordsetRW("wir","select * from wireless_line")
+F.ODBC.conts!wir.AddNew
+F.ODBC.conts!wir.Set!TRANS_ID(V.Local.sTransID)
+F.ODBC.conts!wir.Set!SEQ("0000")
+F.ODBC.conts!wir.Set!TRANS_TYPE("S40")
+F.ODBC.conts!wir.Set!FIELD_1(V.Local.sPackNo)
+F.ODBC.conts!wir.Set!FIELD_24("N")
+F.ODBC.conts!wir.Set!FIELD_25(0)
+F.ODBC.conts!wir.Set!ERROR_ID(0)
+F.ODBC.conts!wir.Update
+F.ODBC.conts!wir.Close
+
+'Write the S40 transaction to WIRELESS_HDR
+Function.ODBC.Connection!conts.OpenRecordsetRW("rstNew","SELECT * from WIRELESS_HDR")
+Function.ODBC.conts!rstNew.AddNew
+Function.ODBC.conts!rstNew.Set!TRANS_ID(V.Local.sTransID)
+Function.ODBC.conts!rstNew.Set!TRANS_TYPE("S40")
+Function.ODBC.conts!rstNew.Set!ATTEMPTED_DATE("00000000")
+Function.ODBC.conts!rstNew.Set!ATTEMPTED_TIME("00000000")
+Function.ODBC.conts!rstNew.Set!LABEL_PRINTER("UPID:1")
+Function.ODBC.conts!rstNew.Set!USER_ID(V.Caller.User)
+Function.ODBC.conts!rstNew.Set!BATCH(0)
+F.ODBC.conts!rstNew.Update
+F.ODBC.conts!rstNew.Close
+
+'Loop to see if the transaction was successful
+V.Local.bSuccess.Set(False)
+V.Local.iCount.Set(0)
+F.Intrinsic.String.Build("select * from WIRELESS_HDR where TRANS_ID = '{0}'",V.Local.sTransID,V.Local.sSQL)
+F.Intrinsic.Control.DoUntil(V.Local.bSuccess,=,True)
+	F.Intrinsic.UI.ChangeWaitStatus("Waiting for S40 Transaction Success",V.Local.iCount,0,3000)
+	F.ODBC.Connection!conts.OpenLocalRecordsetRO("rstCheckS40",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.conts!rstCheckS40.EOF,=,False)
+		F.Intrinsic.Control.If(V.ODBC.conts!rstCheckS40.FieldValTrim!SUCCESSFUL_FLAG,=,"Y")
+			V.Local.bSuccess.Set(True)
+			F.Intrinsic.String.Build("{0}{1} {2}.",V.Global.sFulSuccess,V.Ambient.NewLine,V.DataTable.dtS10(0).ORDER_NO!FieldValTrim,V.Global.sFulSuccess)
+			F.ODBC.conts!rstCheckS40.Close
+			F.Intrinsic.Control.ExitSub
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.If(V.Local.iCount.++,=,3000)
+		F.Intrinsic.UI.CloseWaitDialog
+		F.Intrinsic.String.Build("{0}{1} {2}-{3}. S40 transaction failed.",V.Global.sFulFail,V.Ambient.NewLine,V.DataTable.dtS10(0).ORDER_NO!FieldValTrim,V.DataTable.dtS10(0).LINE!FieldValTrim,V.Global.sFulFail)
+		V.Local.bSuccess.Set(True)
+		V.Global.bFail.Set(True)
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conts!rstCheckS40.Close
+F.Intrinsic.Control.Loop
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.transS40.End
+
+Program.Sub.JSONError.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("{0}{1} {2}. The error noted was {3}{4}{3}",V.Global.sError,V.Ambient.NewLine,V.Args.sWebOrdNum.Trim,V.Ambient.DblQuote,V.Args.JSONError.Trim,V.Global.sError)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.JSONError.End
+
+Program.Sub.SendEmails.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+V.Local.sBody.Declare(String,"")
+V.Local.sRecipients.Declare(String,"")
+V.Local.sSender.Declare(String,"")
+V.Local.sFile.Declare(String,"")
+V.Local.iUserID.Declare(Long,0)
+
+F.Intrinsic.UI.ChangeWaitStatus("Sending emails and closing process")
+
+F.ODBC.Connection!conX.OpenCompanyConnection
+
+'Successful new order creation
+F.Intrinsic.Control.If(V.Global.sBody.Trim,<>,"")
+	F.Intrinsic.String.Build("The following orders have been created in Global Shop from Shopify:{0}{0}{1}",V.Ambient.NewLine,V.Global.sBody,V.Local.sBody)
+F.Intrinsic.Control.EndIf
+'Successful GS order shipped when fulfilled in Shopify
+F.Intrinsic.Control.If(V.Global.sFulSuccess.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}{1}{1}The following orders have successfully been closed in Global Shop as they were marked fulfilled in Shopify{1}{2}",V.Local.sBody,V.Ambient.NewLine,V.Global.sFulSuccess,V.Local.sBody)
+F.Intrinsic.Control.EndIf
+'Orders that failed to create in GS
+F.Intrinsic.Control.If(V.Global.sError.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}{1}{1}The following orders were not created successfully in Global Shop from Shopify{1}{2}",V.Local.sBody,V.Ambient.NewLine,V.Global.sError,V.Local.sBody)
+F.Intrinsic.Control.EndIf
+'Orders deleted in GS when cancelled in Shopify
+F.Intrinsic.Control.If(V.Global.sCANX.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}{1}{1}The following orders were deleted in Global Shop as they have been cancelled in Shopify{1}{2}",V.Local.sBody,V.Ambient.NewLine,V.Global.sCANX,V.Local.sBody)
+F.Intrinsic.Control.EndIf
+'Orders failed to ship in GS due to an error 
+F.Intrinsic.Control.If(V.Global.sFulFail.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}{1}{1}The following orders could not be marked {3}shipped{3} in Global Shop. Please ensure the items are in the "SHIP" bin and Wire Poll is running on your database server.{1}{2}",V.Local.sBody,V.Ambient.NewLine,V.Global.sFulFail,V.Ambient.DblQuote,V.Local.sBody)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}\{1}ORDSSHOPIFY.txt",V.Caller.FilesDir,V.Caller.User,V.Local.sFile)
+F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sBody)
+
+F.Intrinsic.Control.If(V.Local.sBody.Trim,=,"")
+	F.ODBC.Connection!conX.Close
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Data.DataTable.CreateFromSQL("dtEmails","conX","Select RTRIM(LTRIM(EMAIL_ADDR)) as EMAILADDR,RTRIM(LTRIM(RECIPIENT_NAME)) as RECIPIENTNAME from GCG_6597_EMAILS",True)
+
+F.Intrinsic.Control.If(V.DataTable.dtEmails.RowCount,>,0)
+	V.Local.sSender.Set("orders@grovtec.com*!*Grovtec")
+	F.Global.Security.getuserID(V.Caller.User,V.Caller.CompanyCode,V.Local.iUserID)
+		
+	F.Data.DataView.Create("dtEmails","dvEmails",22)
+	F.Data.DataView.ToString("dtEmails","dvEmails","RECIPIENTNAME*!*EMAILADDR","*!*","@!@",V.Local.sRecipients)
+	
+	F.Global.Messaging.Queuemessage(V.Caller.CompanyCode,V.Local.iUserID,"","New Orders Have Been Processed from Shopify",V.Local.sSender,V.Local.sRecipients,V.Local.sBody)
+	
+	F.Data.DataView.Close("dtEmails","dvEmails")
+F.Intrinsic.Control.EndIf
+
+F.Data.DataTable.Close("dtEmails")
+
+F.ODBC.Connection!conX.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.SendEmails.End
+
+Program.Sub.GetORDUPLErrorMessage.Start
+F.Intrinsic.Control.Try
+V.Local.sPath.Declare(String)
+V.Local.sContents.Declare(String)
+V.Local.sMessage.Declare(String,"Unspecified error occured.")
+V.Local.bExists.Declare(Boolean)
+V.Local.sFilter.Declare(String)
+V.Local.sUploadFile.Declare(String)
+'read in the ORDUPL error log
+F.Intrinsic.String.Build("{0}\ORDUP{1}.ERR",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sPath)
+F.Intrinsic.File.Exists(V.Local.sPath,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	F.Intrinsic.File.File2String(V.Local.sPath,V.Local.sContents)
+	'clean it up a bit
+	F.Intrinsic.String.RegExReplace(V.Local.sContents," {2,}"," ",True,True,V.Local.sContents)
+	F.Intrinsic.String.RegExReplace(V.Local.sContents,"\| +","|",True,True,V.Local.sContents)
+	F.Data.DataTable.CreateFromString("dtOrduplError",V.Local.sContents,"Message_1*!*Message_2*!*Date*!*Time*!*File","String*!*String*!*String*!*String*!*String","|",V.Ambient.NewLine)
+	'make sure it has data
+	F.Intrinsic.Control.If(V.DataTable.dtOrduplError.RowCount,>,0)
+		'delete blank last row
+		F.Data.DataTable.DeleteRow("dtOrduplError",V.DataTable.dtOrduplError.RowCount--)
+		'check for error message
+		V.Local.sUploadFile.Set(V.DataTable.dtOrduplError(V.DataTable.dtOrduplError.RowCount--).FILE!FieldValTrim)
+		F.Intrinsic.String.Build("File = '{0}' and Message_1 not in ('Program: ORDUPL Message: Success Message','Program: ORDUP1  Message: Order error')",V.Local.sUploadFile,V.Local.sFilter)
+		F.Data.DataView.Create("dtOrduplError","dvORDUPLError",22,V.Local.sFilter,"")
+		'get error message(s)
+		F.Intrinsic.Control.If(V.DataView.dtOrduplError!dvORDUPLError.RowCount,>,0)
+			F.Data.DataView.ToString("dtOrduplError","dvORDUPLError","Message_2","***NODELIMITER***",V.Ambient.NewLine,V.Local.sMessage)
+		F.Intrinsic.Control.EndIf
+		F.Data.DataView.Close("dtOrduplError","dvORDUPLError")
+	F.Intrinsic.Control.EndIf
+	F.Data.DataTable.Close("dtOrduplError")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Variable.AddRV("ORDUPL_UPLOAD_FILE",V.Local.sUploadFile)
+F.Intrinsic.Variable.AddRV("ORDUPL_ERROR",V.Local.sMessage)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GetORDUPLErrorMessage.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.Error.Start
+V.Local.bFileExists.Declare(Boolean)
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+V.Local.sFile.Declare(String)
+V.Local.sFileError.Declare(String)
+
+F.Intrinsic.String.Build("{0}\Shopify_Errors\{1}_ShopifyError_{2}.txt", V.Caller.FilesDir, V.Caller.User.Trim, V.Ambient.Date.FormatMMDDYYYY, V.Local.sFile)
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2},{3}",V.Ambient.NewLine,V.Args.SubRoutine,V.Args.eNumber,V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date,V.Ambient.Time,V.Local.sSep,V.Local.sError)
+
+F.Intrinsic.File.Exists(V.Local.sFile, V.Local.bFileExists)
+F.Intrinsic.Control.If(V.Local.bFileExists,=,True)
+	F.Intrinsic.File.File2String(V.Local.sFile, V.Local.sFileError)
+	F.Intrinsic.Control.If(V.Local.sFileError.Trim,<>,"")
+		F.Intrinsic.String.Build("{0}{1}{2}", V.Local.sFileError.Trim, V.Ambient.NewLine, V.Local.sError, V.Local.sFileError)
+	F.Intrinsic.Control.Else
+		V.Local.sFileError.Set(V.Local.sError)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.File.DeleteFile(V.Local.sFile)
+
+F.Intrinsic.Control.ElseIf(V.Local.bFileExists,=,False)
+	V.Local.sFileError.Set(V.Local.sError)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.File.String2File(V.Local.sFile, V.Local.sFileError)
+
+F.Intrinsic.Control.CallSub(Unload)
+Program.Sub.Error.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$acollins$}$20220418191635164$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHicBy+qpGgDMPqyH/kr5vNz2sFB6xM+Xmtp8XUYRG9yRA==
+Program.Sub.Comments.End
