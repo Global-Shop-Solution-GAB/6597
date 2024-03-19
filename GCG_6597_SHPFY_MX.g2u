@@ -1,0 +1,619 @@
+﻿Program.Sub.ScreenSU.Start
+Gui.fmMX..Create(BaseForm)
+Gui.fmMX..Caption("Shopify Integration Maintenance")
+Gui.fmMX..Size(8790,5280)
+Gui.fmMX..MinX(0)
+Gui.fmMX..MinY(0)
+Gui.fmMX..Position(0,0)
+Gui.fmMX..AlwaysOnTop(False)
+Gui.fmMX..FontName("Tahoma")
+Gui.fmMX..FontSize(10)
+Gui.fmMX..ControlBox(True)
+Gui.fmMX..MaxButton(False)
+Gui.fmMX..MinButton(True)
+Gui.fmMX..MousePointer(0)
+Gui.fmMX..Moveable(True)
+Gui.fmMX..Sizeable(True)
+Gui.fmMX..ShowInTaskBar(True)
+Gui.fmMX..TitleBar(True)
+Gui.fmMX..Event(UnLoad,fmMX_UnLoad)
+Gui.fmMX..BackColor(12648384)
+Gui.fmMX.frameAPI.Create(Frame)
+Gui.fmMX.frameAPI.Enabled(True)
+Gui.fmMX.frameAPI.Visible(True)
+Gui.fmMX.frameAPI.Zorder(0)
+Gui.fmMX.frameAPI.Size(7005,1170)
+Gui.fmMX.frameAPI.Position(75,105)
+Gui.fmMX.frameAPI.Caption("")
+Gui.fmMX.frameAPI.FontName("Tahoma")
+Gui.fmMX.frameAPI.FontSize(8.25)
+Gui.fmMX.frameAPI.BorderStyle(3)
+Gui.fmMX.lblAPIPass.Create(Label,"API Pass",True,735,195,0,75,780,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblAPIPass.BorderStyle(0)
+Gui.fmMX.lblAPIPass.Parent("frameAPI")
+Gui.fmMX.lblAPIPass.FontStyle(True,False,False,False,False)
+Gui.fmMX.txtAPIPass.Create(TextBox,"",True,4410,300,0,900,720,True,0,"Tahoma",8.25,,1)
+Gui.fmMX.txtAPIPass.Parent("frameAPI")
+Gui.fmMX.txtAPIPass.TabStop(True)
+Gui.fmMX.txtAPIPass.TabIndex(2)
+Gui.fmMX.cmdGetAPI.Create(Button)
+Gui.fmMX.cmdGetAPI.Enabled(True)
+Gui.fmMX.cmdGetAPI.Visible(True)
+Gui.fmMX.cmdGetAPI.Zorder(0)
+Gui.fmMX.cmdGetAPI.Size(1470,300)
+Gui.fmMX.cmdGetAPI.Position(5400,360)
+Gui.fmMX.cmdGetAPI.Caption("Get")
+Gui.fmMX.cmdGetAPI.FontName("Tahoma")
+Gui.fmMX.cmdGetAPI.FontSize(10)
+Gui.fmMX.cmdGetAPI.Parent("frameAPI")
+Gui.fmMX.cmdGetAPI.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdGetAPI.Event(Click,cmdGetAPI_Click)
+Gui.fmMX.cmdSetAPI.Create(Button)
+Gui.fmMX.cmdSetAPI.Enabled(True)
+Gui.fmMX.cmdSetAPI.Visible(True)
+Gui.fmMX.cmdSetAPI.Zorder(0)
+Gui.fmMX.cmdSetAPI.Size(1470,300)
+Gui.fmMX.cmdSetAPI.Position(5400,720)
+Gui.fmMX.cmdSetAPI.Caption("Set")
+Gui.fmMX.cmdSetAPI.FontName("Tahoma")
+Gui.fmMX.cmdSetAPI.FontSize(10)
+Gui.fmMX.cmdSetAPI.Parent("frameAPI")
+Gui.fmMX.cmdSetAPI.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdSetAPI.Event(Click,cmdSetAPI_Click)
+Gui.fmMX.lblAPI.Create(Label,"Set the Global Shop API Credentials",True,3000,195,0,75,90,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblAPI.BorderStyle(0)
+Gui.fmMX.lblAPI.Parent("frameAPI")
+Gui.fmMX.lblAPI.FontStyle(True,False,False,False,False)
+Gui.fmMX.lblAPIUsr.Create(Label,"API Key",True,660,195,0,75,420,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblAPIUsr.BorderStyle(0)
+Gui.fmMX.lblAPIUsr.Parent("frameAPI")
+Gui.fmMX.lblAPIUsr.FontStyle(True,False,False,False,False)
+Gui.fmMX.txtAPIUsr.Create(TextBox,"",True,4410,300,0,900,360,True,0,"Tahoma",8.25,,1)
+Gui.fmMX.txtAPIUsr.Parent("frameAPI")
+Gui.fmMX.txtAPIUsr.TabStop(True)
+Gui.fmMX.txtAPIUsr.TabIndex(1)
+Gui.fmMX.frameSincDt.Create(Frame)
+Gui.fmMX.frameSincDt.Enabled(True)
+Gui.fmMX.frameSincDt.Visible(True)
+Gui.fmMX.frameSincDt.Zorder(0)
+Gui.fmMX.frameSincDt.Size(1590,1170)
+Gui.fmMX.frameSincDt.Position(7095,105)
+Gui.fmMX.frameSincDt.Caption("")
+Gui.fmMX.frameSincDt.FontName("Tahoma")
+Gui.fmMX.frameSincDt.FontSize(8.25)
+Gui.fmMX.frameSincDt.BorderStyle(3)
+Gui.fmMX.cmdSincDt.Create(Button)
+Gui.fmMX.cmdSincDt.Enabled(True)
+Gui.fmMX.cmdSincDt.Visible(True)
+Gui.fmMX.cmdSincDt.Zorder(0)
+Gui.fmMX.cmdSincDt.Size(1470,300)
+Gui.fmMX.cmdSincDt.Position(75,720)
+Gui.fmMX.cmdSincDt.Caption("Set")
+Gui.fmMX.cmdSincDt.FontName("Tahoma")
+Gui.fmMX.cmdSincDt.FontSize(10)
+Gui.fmMX.cmdSincDt.DefaultValue("")
+Gui.fmMX.cmdSincDt.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdSincDt.Parent("frameSincDt")
+Gui.fmMX.cmdSincDt.Event(Click,cmdSincDt_Click)
+Gui.fmMX.dtpSincDt.Create(DatePicker)
+Gui.fmMX.dtpSincDt.Enabled(True)
+Gui.fmMX.dtpSincDt.Visible(True)
+Gui.fmMX.dtpSincDt.Zorder(0)
+Gui.fmMX.dtpSincDt.Size(1470,300)
+Gui.fmMX.dtpSincDt.Position(75,360)
+Gui.fmMX.dtpSincDt.CheckBox(False)
+Gui.fmMX.dtpSincDt.FontName("Tahoma")
+Gui.fmMX.dtpSincDt.FontSize(8.25)
+Gui.fmMX.dtpSincDt.FontStyle(True,False,False,False,False)
+Gui.fmMX.dtpSincDt.Parent("frameSincDt")
+Gui.fmMX.dtpSincDt.TabStop(True)
+Gui.fmMX.dtpSincDt.TabIndex(3)
+Gui.fmMX.lblSincDt.Create(Label,"Order Since Date",True,1425,195,0,75,90,True,2,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblSincDt.BorderStyle(0)
+Gui.fmMX.lblSincDt.FontStyle(True,False,False,False,False)
+Gui.fmMX.lblSincDt.Parent("frameSincDt")
+Gui.fmMX.frameEmail.Create(Frame)
+Gui.fmMX.frameEmail.Enabled(True)
+Gui.fmMX.frameEmail.Visible(True)
+Gui.fmMX.frameEmail.Zorder(0)
+Gui.fmMX.frameEmail.Size(7005,3435)
+Gui.fmMX.frameEmail.Position(75,1305)
+Gui.fmMX.frameEmail.Caption("")
+Gui.fmMX.frameEmail.FontName("Tahoma")
+Gui.fmMX.frameEmail.FontSize(8.25)
+Gui.fmMX.frameEmail.BorderStyle(3)
+Gui.fmMX.txtEmail.Create(TextBox,"",True,4410,300,0,900,420,True,0,"Tahoma",8.25,,1)
+Gui.fmMX.txtEmail.Parent("frameEmail")
+Gui.fmMX.txtEmail.TabStop(True)
+Gui.fmMX.txtEmail.TabIndex(4)
+Gui.fmMX.cmdDelEmail.Create(Button)
+Gui.fmMX.cmdDelEmail.Enabled(True)
+Gui.fmMX.cmdDelEmail.Visible(True)
+Gui.fmMX.cmdDelEmail.Zorder(0)
+Gui.fmMX.cmdDelEmail.Size(1470,300)
+Gui.fmMX.cmdDelEmail.Position(5400,765)
+Gui.fmMX.cmdDelEmail.Caption("Delete")
+Gui.fmMX.cmdDelEmail.FontName("Tahoma")
+Gui.fmMX.cmdDelEmail.FontSize(10)
+Gui.fmMX.cmdDelEmail.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdDelEmail.Parent("frameEmail")
+Gui.fmMX.cmdDelEmail.Event(Click,cmdDelEmail_Click)
+Gui.fmMX.cmdSvEmail.Create(Button)
+Gui.fmMX.cmdSvEmail.Enabled(True)
+Gui.fmMX.cmdSvEmail.Visible(True)
+Gui.fmMX.cmdSvEmail.Zorder(0)
+Gui.fmMX.cmdSvEmail.Size(1470,300)
+Gui.fmMX.cmdSvEmail.Position(5400,420)
+Gui.fmMX.cmdSvEmail.Caption("Save")
+Gui.fmMX.cmdSvEmail.FontName("Tahoma")
+Gui.fmMX.cmdSvEmail.FontSize(10)
+Gui.fmMX.cmdSvEmail.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdSvEmail.Parent("frameEmail")
+Gui.fmMX.cmdSvEmail.Event(Click,cmdSvEmail_Click)
+Gui.fmMX.lblSetEmails.Create(Label,"Set Email Recipients",True,1710,195,0,75,165,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblSetEmails.BorderStyle(0)
+Gui.fmMX.lblSetEmails.FontStyle(True,False,False,False,False)
+Gui.fmMX.lblSetEmails.Parent("frameEmail")
+Gui.fmMX.GsSetEmails.Create(GsGridControl)
+Gui.fmMX.GsSetEmails.Enabled(True)
+Gui.fmMX.GsSetEmails.Visible(True)
+Gui.fmMX.GsSetEmails.Zorder(0)
+Gui.fmMX.GsSetEmails.Size(6810,2190)
+Gui.fmMX.GsSetEmails.Position(75,1155)
+Gui.fmMX.GsSetEmails.Event(RowCellClick,GsSetEmails_RowCellClick)
+Gui.fmMX.GsSetEmails.Parent("frameEmail")
+Gui.fmMX.lblEmail.Create(Label,"Email",True,450,195,0,75,480,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblEmail.BorderStyle(0)
+Gui.fmMX.lblEmail.Parent("frameEmail")
+Gui.fmMX.lblEmail.FontStyle(True,False,False,False,False)
+Gui.fmMX.lblRecipient.Create(Label,"Name",True,480,195,0,75,825,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblRecipient.BorderStyle(0)
+Gui.fmMX.lblRecipient.Parent("frameEmail")
+Gui.fmMX.lblRecipient.FontStyle(True,False,False,False,False)
+Gui.fmMX.txtRecipient.Create(TextBox,"",True,4410,300,0,900,765,True,0,"Tahoma",8.25,,1)
+Gui.fmMX.txtRecipient.Parent("frameEmail")
+Gui.fmMX.txtRecipient.TabStop(True)
+Gui.fmMX.txtRecipient.TabIndex(5)
+Gui.fmMX.frameInvAss.Create(Frame)
+Gui.fmMX.frameInvAss.Enabled(True)
+Gui.fmMX.frameInvAss.Visible(True)
+Gui.fmMX.frameInvAss.Zorder(0)
+Gui.fmMX.frameInvAss.Size(1590,1890)
+Gui.fmMX.frameInvAss.Position(7095,2850)
+Gui.fmMX.frameInvAss.Caption("")
+Gui.fmMX.frameInvAss.FontName("Tahoma")
+Gui.fmMX.frameInvAss.FontSize(8.25)
+Gui.fmMX.frameInvAss.BorderStyle(3)
+Gui.fmMX.cmdInvAss.Create(Button)
+Gui.fmMX.cmdInvAss.Enabled(True)
+Gui.fmMX.cmdInvAss.Visible(True)
+Gui.fmMX.cmdInvAss.Zorder(0)
+Gui.fmMX.cmdInvAss.Size(1470,990)
+Gui.fmMX.cmdInvAss.Position(75,150)
+Gui.fmMX.cmdInvAss.Caption("Reset Inventory Association List")
+Gui.fmMX.cmdInvAss.FontName("Tahoma")
+Gui.fmMX.cmdInvAss.FontSize(8.25)
+Gui.fmMX.cmdInvAss.Parent("frameInvAss")
+Gui.fmMX.cmdInvAss.Event(Click,cmdInvAss_Click)
+Gui.fmMX.cmdInvAss.FontStyle(True,False,False,False,False)
+Gui.fmMX.frameShopVer.Create(Frame)
+Gui.fmMX.frameShopVer.Enabled(True)
+Gui.fmMX.frameShopVer.Visible(True)
+Gui.fmMX.frameShopVer.Zorder(0)
+Gui.fmMX.frameShopVer.Size(1590,1470)
+Gui.fmMX.frameShopVer.Position(7095,1305)
+Gui.fmMX.frameShopVer.Caption("")
+Gui.fmMX.frameShopVer.FontName("Tahoma")
+Gui.fmMX.frameShopVer.FontSize(8.25)
+Gui.fmMX.frameShopVer.BorderStyle(3)
+Gui.fmMX.cmdSetShopVer.Create(Button)
+Gui.fmMX.cmdSetShopVer.Enabled(True)
+Gui.fmMX.cmdSetShopVer.Visible(True)
+Gui.fmMX.cmdSetShopVer.Zorder(0)
+Gui.fmMX.cmdSetShopVer.Size(1470,300)
+Gui.fmMX.cmdSetShopVer.Position(75,1110)
+Gui.fmMX.cmdSetShopVer.Caption("Set")
+Gui.fmMX.cmdSetShopVer.FontName("Tahoma")
+Gui.fmMX.cmdSetShopVer.FontSize(10)
+Gui.fmMX.cmdSetShopVer.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdSetShopVer.Parent("frameShopVer")
+Gui.fmMX.cmdSetShopVer.Event(Click,cmdSetShopVer_Click)
+Gui.fmMX.lblShopVer.Create(Label,"Shopify Version",True,1305,195,0,150,165,True,0,"Tahoma",8.25,,0,0)
+Gui.fmMX.lblShopVer.BorderStyle(0)
+Gui.fmMX.lblShopVer.FontStyle(True,False,False,False,False)
+Gui.fmMX.lblShopVer.Parent("frameShopVer")
+Gui.fmMX.txtShopVer.Create(TextBox,"",True,1470,300,0,75,420,True,0,"Tahoma",8.25,,1)
+Gui.fmMX.txtShopVer.Parent("frameShopVer")
+Gui.fmMX.cmdGetShopVer.Create(Button)
+Gui.fmMX.cmdGetShopVer.Enabled(True)
+Gui.fmMX.cmdGetShopVer.Visible(True)
+Gui.fmMX.cmdGetShopVer.Zorder(0)
+Gui.fmMX.cmdGetShopVer.Size(1470,300)
+Gui.fmMX.cmdGetShopVer.Position(75,765)
+Gui.fmMX.cmdGetShopVer.Caption("Get")
+Gui.fmMX.cmdGetShopVer.FontName("Tahoma")
+Gui.fmMX.cmdGetShopVer.FontSize(10)
+Gui.fmMX.cmdGetShopVer.FontStyle(True,False,False,False,False)
+Gui.fmMX.cmdGetShopVer.Parent("frameShopVer")
+Gui.fmMX.cmdGetShopVer.Event(Click,cmdGetShopVer_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'TJS February 2020
+'Customer; Benchmark Media Systems
+'AJC JANUARY 2022
+'Customer - Grovtec
+'This is a maintenance program where the customer can store Shopify API credentials, 
+'email recipients, Shopify version, the Shopify Order Since date and reset inventory 
+'associations.  This information is used by  
+'GCG_6597_SHOPIFY_INT.g2u
+'GCG_6597_SHPFY_UPDT.g2u
+'GCG_6597_SHPFY_INV_ASS.g2u
+'All data is stored as a single row in GCG_6597_API 
+Gui.fmMX..ApplyTheme()
+F.Intrinsic.Control.CallSub(SetIcon)
+F.Intrinsic.Control.CallSub(EmailData)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.EmailData.Start
+F.Intrinsic.Control.Try
+V.Local.sSQL.Declare
+V.Local.sCmdCap.Declare
+
+F.Intrinsic.Control.If(V.DataTable.dtEmails.Exists)
+	F.Data.DataTable.Close("dtEmails")
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.Data.DataTable.CreateFromSQL("dtEmails","conts","Select RTRIM(EMAIL_ADDR) as EMAIL_ADDR,RTRIM(RECIPIENT_NAME) as RECIPIENT_NAME from GCG_6597_EMAILS",True)
+
+F.ODBC.Connection!conts.ExecuteAndReturn("select SINCE_DATE from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+
+F.Intrinsic.Control.If(V.Local.sSQL.Trim,=,"")
+	Gui.fmMX.dtpSincDt.Value(V.Ambient.Date)
+F.Intrinsic.Control.Else
+	Gui.fmMX.dtpSincDt.Value(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("Reset Inventory{0}Association List",V.Ambient.NewLine,V.Local.sCmdCap)
+Gui.fmMX.cmdInvAss.Caption(V.Local.sCmdCap)
+
+F.ODBC.Connection!conts.Close
+
+Gui.fmMX.GsSetEmails.AddGridviewFromDatatable("gvEmails","dtEmails")
+Gui.fmMX.GsSetEmails.MainView("gvEmails")
+
+Gui.fmMX.GsSetEmails.SuspendLayout
+
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","EMAIL_ADDR","CAPTION","EMAIL")
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","RECIPIENT_NAME","CAPTION","RECIPIENT")
+
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","EMAIL_ADDR","HeaderFontBold",True)
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","RECIPIENT_NAME","HeaderFontBold",True)
+
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","EMAIL_ADDR","HeaderHAlignment","Center")
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","RECIPIENT_NAME","HeaderHAlignment","Center")
+
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","EMAIL_ADDR","AllowEdit",False)
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","RECIPIENT_NAME","AllowEdit",False)
+
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","EMAIL_ADDR","ReadOnly",True)
+Gui.fmMX.GsSetEmails.SetColumnProperty("gvEmails","RECIPIENT_NAME","ReadOnly",True)
+
+Gui.fmMX.GsSetEmails.ResumeLayout
+Gui.fmMX..Show
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.EmailData.End
+
+Program.Sub.cmdGetAPI_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sSQL.Declare
+V.Local.sAPIKEY.Declare
+V.Local.sAPIPASS.Declare
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.ODBC.Connection!conts.ExecuteAndReturn("select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS from GCG_6597_API where REC_ID = 1",V.Local.sSQL)
+
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+
+F.Intrinsic.Control.If(V.Local.sSQL.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("There are no API credentials on file","Error")
+F.Intrinsic.Control.Else
+	V.Local.sAPIKEY.Set(V.Local.sSQL(0))
+	V.Local.sAPIPASS.Set(V.Local.sSQL(1))
+	F.Intrinsic.String.WeakDecryption(V.Local.sAPIKEY,V.Local.sAPIKEY)
+	F.Intrinsic.String.WeakDecryption(V.Local.sAPIPASS,V.Local.sAPIPASS)
+	Gui.fmMX.txtAPIUsr.Text(V.Local.sAPIKEY.Trim)
+	Gui.fmMX.txtAPIPass.Text(V.Local.sAPIPASS.Trim)
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdGetAPI_Click.End
+
+Program.Sub.cmdSetAPI_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sAPIKEY.Declare
+V.Local.sAPIPASS.Declare
+V.Local.sSQL.Declare
+V.Local.iRET.Declare
+
+F.Intrinsic.Control.If(V.Screen.fmMX!txtAPIUsr.Text.Trim,=,"","OR",V.Screen.fmMX!txtAPIPass.Text.Trim,=,"")
+	F.Intrinsic.String.Build("This will delete any currently stored credentials.{0}Are you sure you wish to continue?",V.Ambient.NewLine,V.Local.sSQL)
+	F.Intrinsic.UI.Msgbox(V.Local.sSQL,"Warning!",4,V.Local.iRET)
+	F.Intrinsic.Control.If(V.Local.iRET,=,7)
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+V.Local.sAPIKEY.Set(V.Screen.fmMX!txtAPIUsr.Text.Trim)
+V.Local.sAPIPASS.Set(V.Screen.fmMX!txtAPIPass.Text.Trim)
+
+F.Intrinsic.String.WeakEncryption(V.Local.sAPIKEY,V.Local.sAPIKEY)
+F.Intrinsic.String.WeakEncryption(V.Local.sAPIPASS,V.Local.sAPIPASS)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS from GCG_6597_API where REC_ID = 1",V.Local.sSQL)
+F.Intrinsic.Control.If(V.Local.sSQL.Trim,=,"")
+	F.Intrinsic.String.Build("Insert into GCG_6597_API (APIKEY,APIPASS) values('{0}','{1}')",V.Local.sAPIKEY.Trim,V.Local.sAPIPASS.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Update GCG_6597_API set APIKEY = '{0}',APIPASS = '{1}' where REC_ID=1",V.Local.sAPIKEY.Trim,V.Local.sAPIPASS.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+
+Gui.fmMX.txtAPIUsr.Text("")
+Gui.fmMX.txtAPIPass.Text("")
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSetAPI_Click.End
+
+Program.Sub.cmdSincDt_Click.Start
+F.Intrinsic.Control.Try
+V.Local.dSinceDate.Declare
+V.Local.sSQL.Declare
+
+V.Local.dSinceDate.Set(V.Screen.fmMX!dtpSincDt.Value)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select * from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	F.Intrinsic.String.Build("Insert into GCG_6597_API (SINCE_DATE) values('{0}')",V.Local.dSinceDate.PervasiveDate,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Update GCG_6597_API set SINCE_DATE='{0}' where REC_ID=1",V.Local.dSinceDate.PervasiveDate,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSincDt_Click.End
+
+Program.Sub.GsSetEmails_RowCellClick.Start
+F.Intrinsic.Control.Try
+V.Local.sEmail.Declare
+V.Local.sName.Declare
+
+Gui.fmMX.GsSetEmails.GetCellValueByColumnName("gvEmails","EMAIL_ADDR",V.Args.RowIndex,V.Local.sEmail)
+Gui.fmMX.GsSetEmails.GetCellValueByColumnName("gvEmails","RECIPIENT_NAME",V.Args.RowIndex,V.Local.sName)
+
+Gui.fmMX.txtEmail.Text(V.Local.sEmail)
+Gui.fmMX.txtRecipient.Text(V.Local.sName)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GsSetEmails_RowCellClick.End
+
+Program.Sub.cmdSvEmail_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sEmail.Declare
+V.Local.sName.Declare
+V.Local.bCheck.Declare
+V.Local.sSQL.Declare
+
+V.Local.sEmail.Set(V.Screen.fmMX!txtEmail.Text)
+V.Local.sName.Set(V.Screen.fmMX!txtRecipient.Text)
+
+F.Intrinsic.Control.If(V.Local.sEmail.Trim,=,"","OR",V.Local.sName.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("Please provide an email address and name","Error!")
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Global.Messaging.IsAddressValid(V.Local.sEmail.Trim,V.Local.bCheck)
+F.Intrinsic.Control.If(v.Local.bCheck,=,False)
+	F.Intrinsic.UI.Msgbox("Email is not in the correct Format. Please enter a valid email address.")
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("select * from GCG_6597_EMAILS where EMAIL_ADDR = '{0}'",V.Local.sEmail.Trim,V.Local.sSQL)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+F.Intrinsic.Control.If(V.Local.sSQL.Trim,=,"")
+	F.Intrinsic.String.Build("Insert into GCG_6597_EMAILS (EMAIL_ADDR,RECIPIENT_NAME) values('{0}','{1}')",V.Local.sEmail.Trim,V.Local.sName.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Update GCG_6597_EMAILS set EMAIL_ADDR='{0}',RECIPIENT_NAME='{1}' where EMAIL_ADDR='{2}'",V.Screen.fmMX!txtEmail.Text,V.Screen.fmMX!txtRecipient.Text,V.Local.sEmail.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.Close
+
+Gui.fmMX.txtEmail.Text("")
+Gui.fmMX.txtRecipient.Text("")
+
+F.Intrinsic.Control.CallSub(EmailData)
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSvEmail_Click.End
+
+Program.Sub.cmdDelEmail_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sEmail.Declare
+V.Local.sName.Declare
+V.Local.sSQL.Declare
+
+V.Local.sEmail.Set(V.Screen.fmMX!txtEmail.Text)
+V.Local.sName.Set(V.Screen.fmMX!txtRecipient.Text)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("delete GCG_6597_EMAILS where EMAIL_ADDR = '{0}'",V.Local.sEmail.Trim,V.Local.sSQL)
+F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.ODBC.Connection!conts.Close
+
+Gui.fmMX.txtEmail.Text("")
+Gui.fmMX.txtRecipient.Text("")
+
+F.Intrinsic.Control.CallSub(EmailData)
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdDelEmail_Click.End
+
+Program.Sub.cmdInvAss_Click.Start
+F.Intrinsic.Control.Try
+V.Local.iRET.Declare
+V.Local.sMsg.Declare
+V.Local.sCall.Declare
+
+F.Intrinsic.String.Build("This will erase all current Shopify to Global Shop{0}Product Associations and attempt to rebuild.{0}Are you sure you wish to continue?",V.Ambient.NewLine,V.Local.sMsg)
+
+F.Intrinsic.UI.Msgbox(V.Local.sMsg,"Warning!",4,V.Local.iRET)
+
+F.Intrinsic.Control.If(V.Local.iRET,=,6)
+	F.Intrinsic.String.Build("{0}GCG_6597_SHPFY_INV_ASS.g2u",V.Caller.GasDir,V.Local.sCall)
+	F.Global.General.CallSyncGAS(V.Local.sCall)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdInvAss_Click.End
+
+Program.Sub.cmdGetShopVer_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sVersion.Declare
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sVersion)
+
+F.Intrinsic.Control.If(V.Local.sVersion.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("No version data on file","Error")
+F.Intrinsic.Control.Else
+	Gui.fmMX.txtShopVer.Text(V.Local.sVersion.Trim)
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdGetShopVer_Click.End
+
+Program.Sub.cmdSetShopVer_Click.Start
+F.Intrinsic.Control.Try
+V.Local.sVersion.Declare
+V.Local.sSQL.Declare
+
+V.Local.sVersion.Set(V.Screen.fmMX!txtShopVer.Text)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("Select RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	F.Intrinsic.String.Build("Insert into GCG_6597_API (SHOPIFY_VER) values('{0}')",V.Local.sVersion.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Update GCG_6597_API set SHOPIFY_VER='{0}' where REC_ID=1",V.Local.sVersion.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+F.ODBC.Connection!conts.Close
+
+Gui.fmMX.txtShopVer.Text("")
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSetShopVer_Click.End
+
+Program.Sub.SetIcon.Start
+F.Intrinsic.Control.Try
+V.Local.sForm.Declare
+V.Local.bExists.Declare
+V.Local.sIcon.Declare
+V.Local.iCounter.Declare
+
+F.Intrinsic.String.Build("{0}\ART\gss2.ico",V.Caller.GlobalDir,v.Local.sIcon)
+F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists.Not)
+    F.Intrinsic.String.Build("{0}\GAB\GAS\gss2.ico",V.Caller.PluginsDir,v.Local.sIcon)
+    F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+    F.Intrinsic.Control.If(V.Local.bExists.Not)
+        F.Intrinsic.Control.ExitSub
+    F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.UI.GetFormList(V.Local.sForm)
+F.Intrinsic.String.Split(V.Local.sForm, "*!*", V.Local.sForm)
+
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.sForm.UBound, 1)
+    Gui.[V.Local.sForm(V.Local.iCounter)]..Icon(V.Local.sIcon)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.SetIcon.End
+
+Program.Sub.fmMX_UnLoad.Start
+F.Intrinsic.Control.End
+Program.Sub.fmMX_UnLoad.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2},{3}",V.Ambient.NewLine,V.Args.SubRoutine,V.Args.eNumber,V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date,V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+F.Intrinsic.Control.CallSub(fmMX_UnLoad)
+Program.Sub.Error.End
+
+Program.Sub.Comments.Start
+${$5$}$2.2020.1.105$}$1
+${$6$}$acollins$}$20220131132720589$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHjj9wdT20XWCe0ETziCl1kfB01WTfKgKzdzfliXVwl+AQ==
+Program.Sub.Comments.End
