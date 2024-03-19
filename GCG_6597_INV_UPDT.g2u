@@ -1,0 +1,151 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'AJC January 2022
+'Customer: Grovtec
+'script to update inventory levels from GSS to Shopify
+'the script will run on an hourly task
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+
+'open the connection to the database
+F.ODBC.Connection!con.OpenConnection(V.Ambient.PDSN, V.Ambient.PUser, V.Ambient.PPass, 5000)
+
+'callsub to pull inventory on hand
+F.Intrinsic.Control.CallSub(PullInv)
+
+'close the connection
+F.ODBC.Connection!con.Close
+'callsub to end
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.PullInv.Start
+F.Intrinsic.Control.Try
+V.Local.iCnt.Declare(Long)
+V.Local.sSQL.Declare(String)
+V.Local.sPart.Declare(String)
+V.Local.sWebID.Declare(String)
+V.Local.sRet.Declare(String)
+
+'Check to see if datatable exists. If it does, close it
+F.Intrinsic.Control.If(V.DataTable.dtInv.Exists)
+	F.Data.DataTable.Close("dtInv")
+F.Intrinsic.Control.EndIf
+
+''build string to pull inventory quantity on hand and add xref WEBID into query
+V.Local.sSQL.Set("SELECT A.PART, B.WEBID, B.INV_ITEM_ID, ((A.QTY_ONHAND) - (A.QTY_REQUIRED)) AS NET_QTY FROM V_INVENTORY_MSTR A LEFT JOIN GCG_6597_INV_ASSOC B ON A.PART = LEFT(B.INV_PART,20)")
+
+''create the datatable
+F.Data.DataTable.CreateFromSQL("dtTemp", "con", V.Local.sSQL, True)
+
+F.Intrinsic.Control.If(V.DataTable.dtTemp.RowCount--,>,-1)
+	F.Data.DataView.Create("dtTemp", "dvTemp", 22, "WEBID <> '' ", "WEBID ASC")
+	F.Data.DataView.ToDataTable("dtTemp", "dvTemp", "dtInv", True)
+'	
+	F.Intrinsic.Control.If(V.DataTable.dtInv.RowCount--,>,-1)
+'		'callsub to push data to Shopify
+		F.Intrinsic.Control.CallSub(ProcessUpdate)
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.EndIf
+
+'callsub to push data to Shopify
+'F.Intrinsic.Control.CallSub(ProcessUpdate)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.PullInv.End
+
+Program.Sub.ProcessUpdate.Start
+F.Intrinsic.Control.Try
+V.Local.fQtyOnHand.Declare(Float)
+V.Local.iCnt.Declare(Long)
+V.Local.sUser.Declare(String,"")
+V.Local.sPass.Declare(String,"")
+V.Local.sTemp.Declare(String,"")
+V.Local.sTest.Declare(String,"")
+V.Local.sRet.Declare(String,"")
+V.Local.sURL.Declare(String,"")
+V.Local.sBody.Declare(String,"")
+V.Local.sVia.Declare(String,"")
+V.Local.sSQL.Declare(String,"")
+V.Local.sVersion.Declare(String,"")
+V.Local.sWebID.Declare(String,"")
+V.Local.sInvItemID.Declare(String, "")
+
+F.ODBC.Connection!con.ExecuteAndReturn("Select RTRIM(APIKEY) as APIKEY,RTRIM(APIPASS) as APIPASS,RTRIM(SHOPIFY_VER) as SHOPIFY_VER from GCG_6597_API where REC_ID=1",V.Local.sSQL)
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.sUser.Set(V.Local.sSQL(0).Trim)
+V.Local.sPass.Set(V.Local.sSQL(1).Trim)
+V.Local.sVersion.Set(V.Local.sSQL(2).Trim)
+V.Local.sSQL.Redim(0,0)
+F.Intrinsic.String.WeakDecryption(V.Local.sUser,V.Local.sUser)
+F.Intrinsic.String.WeakDecryption(V.Local.sPass,V.Local.sPass)
+
+F.Communication.REST.SetProperty("HTTPMethod","POST")
+F.Communication.REST.SetProperty("User",V.Local.sUser)
+F.Communication.REST.SetProperty("Password",V.Local.sPass)
+F.Communication.REST.SetProperty("ContentType","application/json; charset=utf-8")
+F.Communication.REST.SetProperty("Accept","application/json")
+F.Communication.REST.Config("SSLEnabledProtocols=4032",V.Local.sRet)
+
+'F.Intrinsic.Control.If(V.Local.sRet.Long,=,0)
+'	F.Intrinsic.Control.CallSub(Unload)
+'F.Intrinsic.Control.EndIf
+
+'build api with shopify webID
+F.Intrinsic.String.Build("https://grovtec-firearms-accessories.myshopify.com/admin/api/{0}/inventory_levels/set.json", V.Local.sVersion.Trim, V.Local.sURL)
+'V.Local.sURL.Set("https://grovtec-firearms-accessories.myshopify.com/admin/api/2021-01/variants/39580678094919.json")
+
+'loop through dtinv to get the webID and use it for the inventory update
+F.Intrinsic.Control.For(V.Local.iCnt, 0, V.DataTable.dtInv.RowCount--,1)
+	V.Local.sWebID.Set(V.DataTable.dtInv(V.Local.iCnt).WEBID!FieldValTrim)
+	V.Local.sInvItemID.Set(V.DataTable.dtInv(V.Local.iCnt).INV_ITEM_ID!FieldValTrim)
+	V.Local.fQtyOnHand.Set(V.DataTable.dtInv(V.Local.iCnt).NET_QTY!FieldValFloat)
+
+	'We are going to build a json script that will update the part in Shopify with the current inventory levels from GSS.
+	F.Intrinsic.String.Build("{{0}inventory_item_id{0}:{1},{0}location_id{0}:45161428,{0}available{0}:{2}}",V.Ambient.DblQuote,V.Local.sInvItemID.Trim, v.Local.fQtyOnHand.Long,V.Local.sBody)
+	'***********************************************************************************************************
+	'F.Intrinsic.String.Build("{{0}inventory_item_id{0}:41675867488327,{0}location_id{0}:45161428,{0}available{0}:15}",V.Ambient.DblQuote, V.Local.sBody)
+	F.Communication.REST.SetProperty("PostData",V.Local.sBody)
+	F.Communication.REST.Post(V.Local.sURL)
+
+	F.Communication.REST.DoEvents()
+	F.Communication.REST.ReadProperty("TransferredData",V.Local.sTemp)
+	
+	F.Intrinsic.UI.Sleep(1)
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.ProcessUpdate.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2},{3}",V.Ambient.NewLine,V.Args.SubRoutine,V.Args.eNumber,V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date,V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+F.Intrinsic.Control.CallSub(Unload)
+Program.Sub.Error.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.Comments.Start
+${$5$}$2.2020.1.105$}$1
+${$6$}$acollins$}$20220210192104688$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHgmbpAPyUdk+H24hQFsgT2S7bOjmrGV9SPiboLXjTo4BQ==
+Program.Sub.Comments.End
