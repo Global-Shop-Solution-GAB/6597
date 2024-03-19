@@ -1,0 +1,77 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'TJS February 2020
+'Customer: Benchmark Media Systems
+'AJC January 2022
+'Customer: Grovtec
+'The purpose of this script is to run on Online Update hook #38130 and 
+'launch GCG_6597_SHOPIFY_INT.g2u if it is not currently running or has not run in the last 30 minutes
+F.Intrinsic.Control.Try
+V.Local.sCurRunTime.Declare
+V.Local.sRunTimeNow.Declare
+V.Local.sLastRunTime.Declare
+V.Local.iCurPid.Declare
+V.Local.iLastPid.Declare
+V.Local.sSQL.Declare
+V.Local.bRET.Declare
+V.Local.sPath.Declare
+
+V.Local.sCurRunTime.Set(V.Ambient.Now)
+V.Local.sRunTimeNow.Set(V.Ambient.Now)
+
+F.Intrinsic.String.Format(V.Local.sRunTimeNow,"YYYY-MM-DD HH:NN:SS",V.Local.sRunTimeNow)
+
+F.Intrinsic.Date.DateAdd("N",-30,V.Local.sCurRunTime,V.Local.sCurRunTime)
+F.Intrinsic.String.Format(V.Local.sCurRunTime,"YYYY-MM-DD HH:NN:SS",V.Local.sCurRunTime)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.ODBC.Connection!conts.ExecuteAndReturn("select LAST_PID,LAST_RUN_TIME from GCG_6597_API where REC_ID = '1'",V.Local.sSQL)
+
+F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+V.Local.iLastPid.Set(V.Local.sSQL)
+F.Intrinsic.String.Format(V.Local.sSQL(1),"YYYY-MM-DD HH:NN:SS",V.Local.sLastRunTime)
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Task.PIDRunning(V.Local.iLastPid,V.Local.bRET)
+
+F.Intrinsic.Control.If(V.Local.iLastPid,=,0)
+	V.Local.bRET.Set(False)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.bRET,=,True)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.ElseIf(V.Local.sCurRunTime,<=,V.Local.sLastRunTime)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}GCG_6597_SHOPIFY_INT.g2u",V.Caller.GasDir,V.Local.sPath)
+
+F.Global.General.CallAsyncGAS(V.Local.sPath,V.Local.iCurPid)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("Update GCG_6597_API set LAST_PID='{0}',LAST_RUN_TIME='{1}' where REC_ID='1'",V.Local.iCurPid,V.Local.sRunTimeNow,V.Local.sSQL)
+F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2}, {3}", V.Ambient.NewLine, V.Args.SubRoutine, V.Args.eNumber, V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date, V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+Program.Sub.Error.End
+
+Program.Sub.Comments.Start
+${$5$}$2.2020.1.105$}$1
+${$6$}$acollins$}$20220128161955406$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHg5d6ASjo4wRvFjTXdmHJikznkMEuqt8rkYBqk7MCQEzQ==
+Program.Sub.Comments.End
